@@ -469,6 +469,69 @@ void test_curve (void)
     unlink_recursive (path);
 }
 
+void test_gssapi (void)
+{
+    flux_sec_t *sec;
+    zsock_t *cli, *srv, *rdy, *rogue;
+    zpoller_t *srv_poller;
+    int srv_port;
+    char *s;
+
+    sec = flux_sec_create (FLUX_SEC_TYPE_GSSAPI | FLUX_SEC_VERBOSE, NULL);
+    if (!sec)
+        BAIL_OUT ("flux_sec_create GSSAPI failed");
+    ok (flux_sec_comms_init (sec) == 0,
+            "flux_sec_comms_init GSSAPI works");
+
+    /* set up server */
+    if (!(srv = zsock_new_pull (NULL)))
+        BAIL_OUT ("zsock_new: %s", zmq_strerror (errno));
+    ok (flux_sec_ssockinit (sec, srv) == 0,
+            "flux_sec_ssockinit works");
+    srv_port = zsock_bind (srv, "tcp://127.0.0.1:*");
+    ok (srv_port >= 0,
+            "server bound to localhost on port %d", srv_port);
+    if (!(srv_poller = zpoller_new (srv, NULL)))
+        BAIL_OUT ("poller_new failed");
+
+    /* set up client */
+    if (!(cli = zsock_new_push (NULL)))
+        BAIL_OUT ("zsock_new: %s", zmq_strerror (errno));
+    ok (flux_sec_csockinit (sec, cli) == 0,
+            "flux_sec_csockinit works");
+    ok (zsock_connect (cli, "tcp://127.0.0.1:%d", srv_port) >= 0,
+            "client connected to server");
+
+    /* client sends Greetings! */
+    ok (zstr_sendx (cli, "Greetings!", NULL) == 0,
+            "client sent Greetings!");
+    rdy = zpoller_wait (srv_poller, 1000);
+    ok (rdy == srv,
+            "server ready within 1s timeout");
+    s = NULL;
+    ok (rdy != NULL && zstr_recvx (srv, &s, NULL) == 1
+            && s != NULL && !strcmp (s, "Greetings!"),
+            "server received Greetings!");
+    free (s);
+
+    /* rogue client tries to send with no security setup */
+    if (!(rogue = zsock_new_push (NULL)))
+        BAIL_OUT ("zsock_new: %s", zmq_strerror (errno));
+    ok (zsock_connect (rogue, "tcp://127.0.0.1:%d", srv_port) >= 0,
+        "rogue connected to server with no security");
+    ok (zstr_sendx (rogue, "Avast!", NULL) == 0,
+            "rogue sent Avast");
+    rdy = zpoller_wait (srv_poller, 200);
+    ok (rdy == NULL && zpoller_expired (srv_poller),
+            "server not ready within 0.2s timeout");
+    zsock_destroy (&rogue);
+
+    zsock_destroy (&cli);
+    zpoller_destroy (&srv_poller);
+    zsock_destroy (&srv);
+    flux_sec_destroy (sec);
+}
+
 void alarm_callback (int arg)
 {
     diag ("test timed out");
@@ -487,6 +550,7 @@ int main (int argc, char *argv[])
     test_munge ();
     test_plain ();
     test_curve ();
+    test_gssapi ();
 
     done_testing ();
     return (0);
