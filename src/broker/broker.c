@@ -205,7 +205,7 @@ static void usage (void)
 " -v,--verbose                 Be annoyingly verbose\n"
 " -q,--quiet                   Be mysteriously taciturn\n"
 " -X,--module-path PATH        Set module search path (colon separated)\n"
-" -s,--security=plain|curve|none    Select security mode (default: curve)\n"
+" -s,--security=plain|curve|gssapi|none   Security mode (default: curve)\n"
 " -k,--k-ary K                 Wire up in a k-ary tree\n"
 " -H,--heartrate SECS          Set heartrate in seconds (rank 0 only)\n"
 " -g,--shutdown-grace SECS     Set shutdown grace period in seconds\n"
@@ -229,11 +229,17 @@ void parse_command_line_arguments(int argc, char *argv[],
             } else if (!strcmp (optarg, "plain")) {
                 *sec_typemask |= FLUX_SEC_TYPE_PLAIN;
                 *sec_typemask &= ~FLUX_SEC_TYPE_CURVE;
+                *sec_typemask &= ~FLUX_SEC_TYPE_GSSAPI;
             } else if (!strcmp (optarg, "curve")) {
                 *sec_typemask |= FLUX_SEC_TYPE_CURVE;
                 *sec_typemask &= ~FLUX_SEC_TYPE_PLAIN;
+                *sec_typemask &= ~FLUX_SEC_TYPE_GSSAPI;
+            } else if (!strcmp (optarg, "curve")) {
+                *sec_typemask |= FLUX_SEC_TYPE_GSSAPI;
+                *sec_typemask &= ~FLUX_SEC_TYPE_PLAIN;
+                *sec_typemask &= ~FLUX_SEC_TYPE_CURVE;
             } else {
-                log_msg_exit ("--security arg must be none|plain|curve");
+                log_msg_exit ("--security arg must be none|plain|curve|gssapi");
             }
             break;
         case 'v':   /* --verbose */
