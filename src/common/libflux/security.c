@@ -33,6 +33,7 @@
 #include <getopt.h>
 #include <libgen.h>
 #include <munge.h>
+#include <pwd.h>
 #include <czmq.h>
 
 #include "security.h"
@@ -59,6 +60,7 @@ struct flux_sec_struct {
     char *confstr;
     uid_t uid;
     uid_t gid;
+    char *principal;
 };
 
 static int checksecdirs (flux_sec_t *c, bool create);
@@ -79,7 +81,8 @@ const char *flux_sec_confstr (flux_sec_t *c)
     if (asprintf (&c->confstr, "Security: epgm=%s, tcp/ipc=%s",
                (c->typemask & FLUX_SEC_TYPE_MUNGE) ? "MUNGE" : "off",
                (c->typemask & FLUX_SEC_TYPE_PLAIN) ? "PLAIN"
-             : (c->typemask & FLUX_SEC_TYPE_CURVE) ? "CURVE" : "off") < 0)
+             : (c->typemask & FLUX_SEC_TYPE_CURVE) ? "CURVE"
+             : (c->typemask & FLUX_SEC_TYPE_GSSAPI) ? "GSSAPI" : "off") < 0)
         oom ();
     return c->confstr;
 }
@@ -109,20 +112,59 @@ void flux_sec_destroy (flux_sec_t *c)
         free (c->errstr);
         free (c->confstr);
         zactor_destroy (&c->auth);
+        free (c->principal);
         free (c);
     }
 }
 
+static char *lookup_username (uid_t uid)
+{
+    struct passwd pwd, *result;
+    long bufsize = sysconf(_SC_GETPW_R_SIZE_MAX);
+    char *buf = NULL;
+    char *username = NULL;
+    int e;
+
+    if (bufsize == -1)
+        bufsize = 16384;        /* Should be more than enough */
+    if (!(buf = calloc (1, bufsize))) {
+        errno = ENOMEM;
+        goto error;
+    }
+    e = getpwuid_r (uid, &pwd, buf, bufsize, &result);
+    if (result == NULL) {
+        errno = e ? e : ENOENT;
+        goto error;
+    }
+    if (!(username = strdup (result->pw_name))) {
+        errno = ENOENT;
+        goto error;
+    }
+    free (buf);
+    return username;
+error:
+    free (buf);
+    return NULL;
+}
+
+
 flux_sec_t *flux_sec_create (int typemask, const char *confdir)
 {
     flux_sec_t *c = calloc (1, sizeof (*c));
+    int count = 0;
 
-    if ((typemask & FLUX_SEC_TYPE_CURVE) && (typemask & FLUX_SEC_TYPE_PLAIN)) {
-        errno = EINVAL;
-        goto error;
-    }
     if (!c) {
         errno = ENOMEM;
+        goto error;
+    }
+    if ((typemask & FLUX_SEC_TYPE_CURVE))
+        count++;
+    if ((typemask & FLUX_SEC_TYPE_PLAIN))
+        count++;
+    if ((typemask & FLUX_SEC_TYPE_GSSAPI))
+        count++;
+    if (count > 1) {
+        errno = EINVAL;
         goto error;
     }
     if (confdir) {
@@ -133,12 +175,12 @@ flux_sec_t *flux_sec_create (int typemask, const char *confdir)
     }
     c->uid = getuid ();
     c->gid = getgid ();
+    if (!(c->principal = lookup_username (c->uid)))
+        goto error;
     c->typemask = typemask;
     return c;
 error:
-    if (c)
-        free (c->conf_dir);
-    free (c);
+    flux_sec_destroy (c);
     return NULL;
 }
 
@@ -191,9 +233,8 @@ int flux_sec_comms_init (flux_sec_t *c)
         }
     }
     if (c->auth == NULL && ((c->typemask & FLUX_SEC_TYPE_CURVE)
+                        || (c->typemask & FLUX_SEC_TYPE_GSSAPI)
                         || (c->typemask & FLUX_SEC_TYPE_PLAIN))) {
-        if (checksecdirs (c, false) < 0)
-            goto error;
         if (!(c->auth = zactor_new (zauth, NULL))) {
             seterrstr (c, "zactor_new (zauth): %s", flux_strerror (errno));
             goto error;
@@ -210,6 +251,8 @@ int flux_sec_comms_init (flux_sec_t *c)
                 errno = EINVAL;
                 goto error;
             }
+            if (checksecdirs (c, false) < 0)
+                goto error;
             if (!(c->cli_cert = getcurve (c, "client")))
                 goto error;
             if (!(c->srv_cert = getcurve (c, "server")))
@@ -222,8 +265,16 @@ int flux_sec_comms_init (flux_sec_t *c)
             if (zsock_wait (c->auth) < 0)
                 goto error;
         }
-        if ((c->typemask & FLUX_SEC_TYPE_PLAIN)) {
+        else if ((c->typemask & FLUX_SEC_TYPE_PLAIN)) {
+            if (checksecdirs (c, false) < 0)
+                goto error;
             if (zstr_sendx (c->auth, "PLAIN", c->passwd_file, NULL) < 0)
+                goto error;
+            if (zsock_wait (c->auth) < 0)
+                goto error;
+        }
+        else if ((c->typemask & FLUX_SEC_TYPE_GSSAPI)) {
+            if (zstr_sendx (c->auth, "GSSAPI", NULL) < 0)
                 goto error;
             if (zsock_wait (c->auth) < 0)
                 goto error;
@@ -242,7 +293,12 @@ int flux_sec_csockinit (flux_sec_t *c, void *sock)
         zsock_set_zap_domain (sock, FLUX_ZAP_DOMAIN);
         zcert_apply (c->cli_cert, sock);
         zsock_set_curve_serverkey (sock, zcert_public_txt (c->srv_cert));
-    } else if ((c->typemask & FLUX_SEC_TYPE_PLAIN)) {
+    }
+    else if ((c->typemask & FLUX_SEC_TYPE_GSSAPI)) {
+        zsock_set_gssapi_service_principal (sock, c->principal);
+        zsock_set_gssapi_principal (sock, c->principal);
+    }
+    else if ((c->typemask & FLUX_SEC_TYPE_PLAIN)) {
         char *passwd = NULL;
         if (!(passwd = getpasswd (c, "client"))) {
             seterrstr (c, "client not found in %s", c->passwd_file);
@@ -263,7 +319,12 @@ int flux_sec_ssockinit (flux_sec_t *c, void *sock)
         zsock_set_zap_domain (sock, FLUX_ZAP_DOMAIN);
         zcert_apply (c->srv_cert, sock);
         zsock_set_curve_server (sock, 1);
-    } else if ((c->typemask & (FLUX_SEC_TYPE_PLAIN))) {
+    }
+    else if ((c->typemask & (FLUX_SEC_TYPE_GSSAPI))) {
+        zsock_set_gssapi_server (sock, 1);
+        zsock_set_gssapi_principal (sock, c->principal);
+    }
+    else if ((c->typemask & (FLUX_SEC_TYPE_PLAIN))) {
         zsock_set_plain_server (sock, 1);
     }
     return 0;

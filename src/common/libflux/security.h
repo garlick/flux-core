@@ -10,10 +10,13 @@ extern "C" {
 typedef struct flux_sec_struct flux_sec_t;
 
 enum {
-    /* enabled security modes */
-    FLUX_SEC_TYPE_PLAIN = 1, // cannot be used with CURVE
-    FLUX_SEC_TYPE_CURVE = 2, // cannot be used with PLAIN
-    FLUX_SEC_TYPE_MUNGE = 4,
+    /* enabled security modes
+     * Only one of PLAIN, CURVE, GSSAPI can be enabled at a time.
+     */
+    FLUX_SEC_TYPE_PLAIN = 1,
+    FLUX_SEC_TYPE_CURVE = 2,
+    FLUX_SEC_TYPE_GSSAPI = 4,
+    FLUX_SEC_TYPE_MUNGE = 8,
 
     /* flags */
     FLUX_SEC_FAKEMUNGE = 0x10, // testing only
