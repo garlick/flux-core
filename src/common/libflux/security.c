@@ -274,6 +274,10 @@ int flux_sec_comms_init (flux_sec_t *c)
                 goto error;
         }
         else if ((c->typemask & FLUX_SEC_TYPE_GSSAPI)) {
+            /* N.B. see issue #758  FIXME!
+             * There is currently no way to limit which client principals
+             * are allowed to connect.  This is a czmq zauth limitiation.
+             */
             if (zstr_sendx (c->auth, "GSSAPI", NULL) < 0)
                 goto error;
             if (zsock_wait (c->auth) < 0)
@@ -296,7 +300,13 @@ int flux_sec_csockinit (flux_sec_t *c, void *sock)
     }
     else if ((c->typemask & FLUX_SEC_TYPE_GSSAPI)) {
         zsock_set_gssapi_service_principal (sock, c->principal);
-        zsock_set_gssapi_principal (sock, c->principal);
+        /* N.B. see issue #758
+         * Setting the client principal the same as the service principal
+         * causes auth to silently fail with no communication to KDC on
+         * the wire.  Leaving it unset leaves determination of the client
+         * principal up to libkrb5 which is suitable for our purposes.
+         */
+        //zsock_set_gssapi_principal (sock, c->principal);
     }
     else if ((c->typemask & FLUX_SEC_TYPE_PLAIN)) {
         char *passwd = NULL;
