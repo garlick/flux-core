@@ -480,8 +480,10 @@ void test_gssapi (void)
     sec = flux_sec_create (FLUX_SEC_TYPE_GSSAPI | FLUX_SEC_VERBOSE, NULL);
     if (!sec)
         BAIL_OUT ("flux_sec_create GSSAPI failed");
-    ok (flux_sec_comms_init (sec) == 0,
-            "flux_sec_comms_init GSSAPI works");
+    if (flux_sec_comms_init (sec) < 0) {
+        flux_sec_destroy (sec);
+        BAIL_OUT ("flux_sec_comms_init failed");
+    }
 
     /* set up server */
     if (!(srv = zsock_new_pull (NULL)))
