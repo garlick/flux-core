@@ -247,7 +247,7 @@ int flux_sec_comms_init (flux_sec_t *c)
         }
         if ((c->typemask & FLUX_SEC_TYPE_CURVE)) {
             if (!zsys_has_curve ()) {
-                seterrstr (c, "libczmq was not built with CURVE support!");
+                seterrstr (c, "czmq/libzmq not built with CURVE support!");
                 errno = EINVAL;
                 goto error;
             }
@@ -274,6 +274,11 @@ int flux_sec_comms_init (flux_sec_t *c)
                 goto error;
         }
         else if ((c->typemask & FLUX_SEC_TYPE_GSSAPI)) {
+            if (!zmq_has ("gssapi")) {
+                seterrstr (c, "libzmq not built with GSSAPI support!");
+                errno = EINVAL;
+                goto error;
+            }
             /* N.B. see issue #758  FIXME!
              * There is currently no way to limit which client principals
              * are allowed to connect.  This is a czmq zauth limitiation.
