@@ -46,6 +46,7 @@
 
 
 #define FLUX_ZAP_DOMAIN "flux"
+#define FLUX_DEFAULT_SERVICE_PRINCIPAL "flux"
 
 struct flux_sec_struct {
     zactor_t *auth;
@@ -60,7 +61,7 @@ struct flux_sec_struct {
     char *confstr;
     uid_t uid;
     uid_t gid;
-    char *principal;
+    char *service_principal;
 };
 
 static int checksecdirs (flux_sec_t *c, bool create);
@@ -112,41 +113,10 @@ void flux_sec_destroy (flux_sec_t *c)
         free (c->errstr);
         free (c->confstr);
         zactor_destroy (&c->auth);
-        free (c->principal);
+        free (c->service_principal);
         free (c);
     }
 }
-
-static char *lookup_username (uid_t uid)
-{
-    struct passwd pwd, *result;
-    long bufsize = sysconf(_SC_GETPW_R_SIZE_MAX);
-    char *buf = NULL;
-    char *username = NULL;
-    int e;
-
-    if (bufsize == -1)
-        bufsize = 16384;        /* Should be more than enough */
-    if (!(buf = calloc (1, bufsize))) {
-        errno = ENOMEM;
-        goto error;
-    }
-    e = getpwuid_r (uid, &pwd, buf, bufsize, &result);
-    if (result == NULL) {
-        errno = e ? e : ENOENT;
-        goto error;
-    }
-    if (!(username = strdup (result->pw_name))) {
-        errno = ENOENT;
-        goto error;
-    }
-    free (buf);
-    return username;
-error:
-    free (buf);
-    return NULL;
-}
-
 
 flux_sec_t *flux_sec_create (int typemask, const char *confdir)
 {
@@ -173,10 +143,12 @@ flux_sec_t *flux_sec_create (int typemask, const char *confdir)
             goto error;
         }
     }
+    if (!(c->service_principal = strdup (FLUX_DEFAULT_SERVICE_PRINCIPAL))) {
+        errno = ENOMEM;
+        goto error;
+    }
     c->uid = getuid ();
     c->gid = getgid ();
-    if (!(c->principal = lookup_username (c->uid)))
-        goto error;
     c->typemask = typemask;
     return c;
 error:
@@ -294,6 +266,22 @@ error:
     return -1;
 }
 
+int flux_sec_set_service_principal (flux_sec_t *c, const char *name)
+{
+    if (!(c->typemask & FLUX_SEC_TYPE_GSSAPI)) {
+        errno = EINVAL;
+        return -1;
+    }
+    char *cpy = strdup (name);
+    if (!cpy) {
+        errno = ENOMEM;
+        return -1;
+    }
+    free (c->service_principal);
+    c->service_principal = cpy;
+    return 0;
+}
+
 int flux_sec_csockinit (flux_sec_t *c, void *sock)
 {
     int rc = -1;
@@ -304,14 +292,16 @@ int flux_sec_csockinit (flux_sec_t *c, void *sock)
         zsock_set_curve_serverkey (sock, zcert_public_txt (c->srv_cert));
     }
     else if ((c->typemask & FLUX_SEC_TYPE_GSSAPI)) {
-        zsock_set_gssapi_service_principal (sock, c->principal);
-        /* N.B. see issue #758
-         * Setting the client principal the same as the service principal
-         * causes auth to silently fail with no communication to KDC on
-         * the wire.  Leaving it unset leaves determination of the client
-         * principal up to libkrb5 which is suitable for our purposes.
-         */
-        //zsock_set_gssapi_principal (sock, c->principal);
+        zsock_set_gssapi_service_principal (sock, c->service_principal);
+#if ZMQ_GSSAPI_SERVICE_PRINCIPAL_NAMETYPE
+        int name_type = ZMQ_GSSAPI_NT_USER_NAME;
+        if (zmq_setsockopt (zsock_resolve (sock),
+                            ZMQ_GSSAPI_SERVICE_PRINCIPAL_NAMETYPE,
+                            &name_type, sizeof (name_type)) < 0) {
+            seterrstr (c, "error setting gssapi service principal nametype");
+            goto done;
+        }
+#endif
     }
     else if ((c->typemask & FLUX_SEC_TYPE_PLAIN)) {
         char *passwd = NULL;
@@ -337,7 +327,6 @@ int flux_sec_ssockinit (flux_sec_t *c, void *sock)
     }
     else if ((c->typemask & (FLUX_SEC_TYPE_GSSAPI))) {
         zsock_set_gssapi_server (sock, 1);
-        zsock_set_gssapi_principal (sock, c->principal);
     }
     else if ((c->typemask & (FLUX_SEC_TYPE_PLAIN))) {
         zsock_set_plain_server (sock, 1);

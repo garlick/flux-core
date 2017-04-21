@@ -70,6 +70,13 @@ int flux_sec_keygen (flux_sec_t *c);
  */
 int flux_sec_comms_init (flux_sec_t *c);
 
+/* Initialize the GSSAPI service principal to authenticate
+ * to on a remote connection.  This applies to client connections.
+ * It must match the credential loaded on the remote server end.
+ * If not set, "flux" in the local realm is used.
+ */
+int flux_sec_set_service_principal (flux_sec_t *c, const char *name);
+
 /* Enable the configured security mode (client role) on a
  * zeromq socket.  For PLAIN, the client password is
  * obtained from 'confdir' and associated with the socket.
