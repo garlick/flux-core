@@ -47,7 +47,7 @@ struct alloc {
     // e.g. for mode limited w/ limit=1, max of 1
     unsigned int alloc_pending_count;
     unsigned int free_pending_count;
-    char *sched_sender; // for disconnect
+    const flux_msg_t *ready_request; // for disconnect
 };
 
 static void requeue_pending (struct alloc *alloc, struct job *job)
@@ -105,8 +105,8 @@ static void interface_teardown (struct alloc *alloc, char *s, int errnum)
         alloc->ready = false;
         alloc->alloc_pending_count = 0;
         alloc->free_pending_count = 0;
-        free (alloc->sched_sender);
-        alloc->sched_sender = NULL;
+        flux_msg_decref (alloc->ready_request);
+        alloc->ready_request = NULL;
         drain_check (alloc->ctx->drain);
     }
 }
@@ -357,7 +357,7 @@ static void hello_cb (flux_t *h, flux_msg_handler_t *mh,
     struct job *job;
 
     /* N.B. no "state" is set in struct alloc after a hello msg, so do
-     * not set ctx->alloc->sched_sender in here.  Do so only in the
+     * not set ctx->alloc->ready_request in here.  Do so only in the
      * ready callback */
     if (flux_request_decode (msg, NULL, NULL) < 0)
         goto error;
@@ -418,10 +418,7 @@ static void ready_cb (flux_t *h, flux_msg_handler_t *mh,
         errno = EPROTO;
         goto error;
     }
-    if (flux_msg_get_route_first (msg, &ctx->alloc->sched_sender) < 0) {
-        flux_log_error (h, "%s: flux_msg_get_route_first", __FUNCTION__);
-        goto error;
-    }
+    ctx->alloc->ready_request = flux_msg_incref (msg);
     ctx->alloc->ready = true;
     flux_log (h, LOG_DEBUG, "scheduler: ready %s", mode);
     count = zlistx_size (ctx->alloc->queue);
@@ -761,15 +758,9 @@ void alloc_disconnect_rpc (flux_t *h,
                            void *arg)
 {
     struct job_manager *ctx = arg;
-    struct alloc *alloc = ctx->alloc;
 
-    if (alloc->sched_sender) {
-        char *sender = NULL;
-        if (flux_msg_get_route_first (msg, &sender) == 0
-            && !strcmp (sender, alloc->sched_sender))
-            interface_teardown (ctx->alloc, "disconnect", 0);
-        free (sender);
-    }
+    if (flux_msg_match_disconnect (msg, ctx->alloc->ready_request))
+        interface_teardown (ctx->alloc, "disconnect", 0);
 }
 
 void alloc_ctx_destroy (struct alloc *alloc)
@@ -783,7 +774,7 @@ void alloc_ctx_destroy (struct alloc *alloc)
         zlistx_destroy (&alloc->queue);
         zlistx_destroy (&alloc->pending_jobs);
         free (alloc->disable_reason);
-        free (alloc->sched_sender);
+        flux_msg_decref (alloc->ready_request);
         free (alloc);
         errno = saved_errno;
     }

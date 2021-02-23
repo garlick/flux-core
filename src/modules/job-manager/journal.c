@@ -254,49 +254,27 @@ error:
     json_decref (a);
 }
 
-static bool match_journal_listener (struct journal_listener *jl,
-                                    uint32_t matchtag,
-                                    const char *sender)
-{
-    uint32_t t;
-    char *s = NULL;
-    bool found = false;
-
-    if (!flux_msg_get_matchtag (jl->request, &t)
-        && matchtag == t
-        && !flux_msg_get_route_first (jl->request, &s)
-        && !strcmp (sender, s))
-        found = true;
-    free (s);
-    return found;
-}
-
 static void journal_cancel_request (flux_t *h, flux_msg_handler_t *mh,
                                     const flux_msg_t *msg, void *arg)
 {
     struct job_manager *ctx = arg;
-    struct journal *journal = ctx->journal;
     struct journal_listener *jl;
-    uint32_t matchtag;
-    char *sender = NULL;
 
-    if (flux_request_unpack (msg, NULL, "{s:i}", "matchtag", &matchtag) < 0
-        || flux_msg_get_route_first (msg, &sender) < 0) {
+    if (flux_request_decode (msg, NULL, NULL) < 0) {
         flux_log_error (h, "error decoding events-cancel request");
         return;
     }
-    jl = zlist_first (journal->listeners);
+    jl = zlist_first (ctx->journal->listeners);
     while (jl) {
-        if (match_journal_listener (jl, matchtag, sender))
+        if (flux_msg_match_cancel (msg, jl->request))
             break;
-        jl = zlist_next (journal->listeners);
+        jl = zlist_next (ctx->journal->listeners);
     }
     if (jl) {
         if (flux_respond_error (h, jl->request, ENODATA, NULL) < 0)
             flux_log_error (h, "%s: flux_respond_error", __FUNCTION__);
-        zlist_remove (journal->listeners, jl);
+        zlist_remove (ctx->journal->listeners, jl);
     }
-    free (sender);
 }
 
 static int create_zlist_and_append (zlist_t **lp, void *item)
@@ -320,26 +298,18 @@ void journal_listeners_disconnect_rpc (flux_t *h,
     struct job_manager *ctx = arg;
     struct journal *journal = ctx->journal;
     struct journal_listener *jl;
-    char *sender;
     zlist_t *tmplist = NULL;
 
-    if (flux_msg_get_route_first (msg, &sender) < 0)
-        return;
     jl = zlist_first (journal->listeners);
     while (jl) {
-        char *tmpsender;
-        if (flux_msg_get_route_first (jl->request, &tmpsender) == 0) {
-            if (!strcmp (sender, tmpsender)) {
-                /* cannot remove from zlist while iterating, so we
-                 * store off entries to remove on another list */
-                if (create_zlist_and_append (&tmplist, jl) < 0) {
-                    flux_log_error (h, "job-manager.disconnect: "
-                                    "failed to remove journal listener");
-                    free (tmpsender);
-                    goto error;
-                }
+        if (flux_msg_match_disconnect (msg, jl->request)) {
+            /* cannot remove from zlist while iterating, so we
+             * store off entries to remove on another list */
+            if (create_zlist_and_append (&tmplist, jl) < 0) {
+                flux_log_error (h, "job-manager.disconnect: "
+                                "failed to remove journal listener");
+                goto error;
             }
-            free (tmpsender);
         }
         jl = zlist_next (journal->listeners);
     }
@@ -347,7 +317,6 @@ void journal_listeners_disconnect_rpc (flux_t *h,
         while ((jl = zlist_pop (tmplist)))
             zlist_remove (journal->listeners, jl);
     }
-    free (sender);
 error:
     zlist_destroy (&tmplist);
 }

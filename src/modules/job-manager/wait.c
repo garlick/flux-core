@@ -306,39 +306,26 @@ void wait_disconnect_rpc (flux_t *h,
 {
     struct job_manager *ctx = arg;
     struct waitjob *wait = ctx->wait;
-    char *sender;
-    char *w_sender;
     struct job *job;
     const flux_msg_t *req;
 
-    if (flux_msg_get_route_first (msg, &sender) < 0)
-        return;
     job = zhashx_first (ctx->active_jobs);
     while (job && wait->waiters > 0) {
-        if (job->waiter) {
-            if (flux_msg_get_route_first (job->waiter, &w_sender) == 0) {
-                if (!strcmp (sender, w_sender)) {
-                    flux_msg_decref (job->waiter);
-                    job->waiter = NULL;
-                    wait->waiters--;
-                }
-            }
-            free (w_sender);
+        if (flux_msg_match_disconnect (msg, job->waiter)) {
+            flux_msg_decref (job->waiter);
+            job->waiter = NULL;
+            wait->waiters--;
         }
         job = zhashx_next (ctx->active_jobs);
     }
     req = zlistx_first (wait->requests);
     while (req) {
-        if (flux_msg_get_route_first (req, &w_sender) == 0) {
-            if (!strcmp (sender, w_sender)) {
-                zlistx_detach_cur (wait->requests);
-                flux_msg_decref (req);
-            }
-            free (w_sender);
+        if (flux_msg_match_disconnect (msg, req)) {
+            zlistx_detach_cur (wait->requests);
+            flux_msg_decref (req);
         }
         req = zlistx_next (wait->requests);
     }
-    free (sender);
 }
 
 struct job *wait_zombie_first (struct waitjob *wait)
