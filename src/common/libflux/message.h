@@ -289,6 +289,18 @@ bool flux_msg_cmp_matchtag (const flux_msg_t *msg, uint32_t matchtag);
  */
 bool flux_msg_cmp (const flux_msg_t *msg, struct flux_match match);
 
+/* Return true if 'op' may be interpreted as a disconnect request that
+ * should cancel pending request 'msg'.  On a match, no response should
+ * be sent to 'op' or 'msg', as the client is assumed to be gone.
+ */
+bool flux_msg_match_disconnect (const flux_msg_t *op, const flux_msg_t *msg);
+
+/* Return true if 'op' may be interpreted as a cancel request that
+ * should cancel pending request 'msg'.  On a match, an ENODATA response
+ * should be sent to 'msg'.  No response should be sent to 'op'.
+ */
+bool flux_msg_match_cancel (const flux_msg_t *op, const flux_msg_t *msg);
+
 /* Print a Flux message on specified output stream.
  */
 void flux_msg_fprint (FILE *f, const flux_msg_t *msg);

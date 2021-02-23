@@ -929,18 +929,16 @@ int flux_msg_get_route_last (const flux_msg_t *msg, char **id)
     return 0;
 }
 
-/* replaces flux_msg_sender */
-int flux_msg_get_route_first (const flux_msg_t *msg, char **id)
+static zframe_t *route_first_zframe (const flux_msg_t *msg)
 {
     uint8_t flags;
     zframe_t *zf, *zf_next;
-    char *s = NULL;
 
     if (flux_msg_get_flags (msg, &flags) < 0)
-        return -1;
+        return NULL;
     if (!(flags & FLUX_MSGFLAG_ROUTE)) {
         errno = EPROTO;
-        return -1;
+        return NULL;
     }
     zf = zmsg_first (msg->zmsg);
     while (zf && zframe_size (zf) > 0) {
@@ -949,10 +947,19 @@ int flux_msg_get_route_first (const flux_msg_t *msg, char **id)
             break;
         zf = zf_next;
     }
-    if (!zf) {
+    if (!zf)
         errno = EPROTO;
+    return zf;
+}
+
+/* replaces flux_msg_sender */
+int flux_msg_get_route_first (const flux_msg_t *msg, char **id)
+{
+    zframe_t *zf;
+    char *s = NULL;
+
+    if (!(zf = route_first_zframe (msg)))
         return -1;
-    }
     if (zframe_size (zf) > 0 && !(s = zframe_strdup (zf))) {
         errno = ENOMEM;
         return -1;
@@ -1655,6 +1662,60 @@ int flux_match_asprintf (struct flux_match *m, const char *topic_glob_fmt, ...)
     return res;
 }
 
+static bool route_first_match (const flux_msg_t *msg1, const flux_msg_t *msg2)
+{
+    zframe_t *uuid1;
+    zframe_t *uuid2;
+
+    if (!(uuid1 = route_first_zframe (msg1))
+        || !(uuid2 = route_first_zframe (msg2))
+        || zframe_size (uuid1) != zframe_size (uuid2)
+        || memcmp (zframe_data (uuid1),
+                   zframe_data (uuid2),
+                   zframe_size (uuid2)) != 0)
+        return false;
+    return true;
+}
+
+static bool authorize_msg (const flux_msg_t *op, const flux_msg_t *msg)
+{
+    uint32_t userid;
+
+    if (flux_msg_get_userid (msg, &userid) < 0
+        || flux_msg_authorize (op, userid) < 0)
+        return false;
+    return true;
+}
+
+bool flux_msg_match_disconnect (const flux_msg_t *op, const flux_msg_t *msg)
+{
+    if (!authorize_msg (op, msg)
+        || !route_first_match (op, msg))
+        return false;
+    return true;
+}
+
+bool flux_msg_match_cancel (const flux_msg_t *op, const flux_msg_t *msg)
+{
+    uint32_t op_tag;
+    uint32_t msg_tag;
+    const char *op_topic;
+    const char *msg_topic;
+
+    if (!authorize_msg (op, msg)
+        || !route_first_match (op, msg)
+        || flux_msg_get_matchtag (msg, &msg_tag) < 0
+        || flux_msg_unpack (op, "{s:i}", "matchtag", &op_tag) < 0
+        || msg_tag != op_tag)
+        return false;
+    if (flux_msg_get_topic (op, &op_topic) < 0
+        || flux_msg_get_topic (msg, &msg_topic) < 0
+        || strlen (op_topic) != strlen (msg_topic) + 7
+        || strncmp (op_topic, msg_topic, strlen (msg_topic)) != 0
+        || strncmp (op_topic + strlen (msg_topic), "-cancel", 7) != 0)
+        return false;
+    return true;
+}
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab

@@ -1013,6 +1013,121 @@ void check_refcount (void)
         "flux_msg_destroy msg=NULL doesnt crash crash");
 }
 
+void check_disconnect (void)
+{
+    flux_msg_t *op;
+    flux_msg_t *msg;
+    char *id;
+
+    if (!(msg = flux_msg_create (FLUX_MSGTYPE_REQUEST))
+        || flux_msg_set_userid (msg, 42) < 0
+        || flux_msg_set_rolemask (msg, FLUX_ROLE_USER) < 0
+        || flux_msg_enable_route (msg) < 0
+        || flux_msg_push_route (msg, "foo") < 0)
+        BAIL_OUT ("error creating message");
+    if (!(op = flux_msg_copy (msg, false)))
+        BAIL_OUT ("error creating disconnect");
+
+    ok (flux_msg_match_disconnect (op, msg) == true,
+        "flux_msg_match_disconnect works");
+
+    ok (flux_msg_match_disconnect (op, NULL) == false,
+        "flux_msg_match_disconnect msg=NULL fails");
+    ok (flux_msg_match_disconnect (NULL, msg) == false,
+        "flux_msg_match_disconnect op=NULL fails");
+    ok (flux_msg_match_disconnect (NULL, NULL) == false,
+        "flux_msg_match_disconnect both=NULL fails");
+
+    /* mismatched userid */
+    if (flux_msg_set_userid (op, 1000) < 0)
+        BAIL_OUT ("error setting userid");
+    ok (flux_msg_match_disconnect (op, msg) == false,
+        "flux_msg_match_disconnect fails if userid's are different");
+    if (flux_msg_set_userid (op, 42) < 0)
+        BAIL_OUT ("error restoring userid");
+    ok (flux_msg_match_disconnect (op, msg) == true,
+        "flux_msg_match_disconnect works after userid restored");
+
+    /* mismatched sender */
+    if (flux_msg_pop_route (msg, &id) < 0
+            || flux_msg_push_route (op, "bar") < 0)
+        BAIL_OUT ("error changing sender");
+    free (id);
+    ok (flux_msg_match_disconnect (op, msg) == false,
+        "flux_msg_match_disconnect fails if sender uuids are different");
+
+    flux_msg_destroy (msg);
+    flux_msg_destroy (op);
+}
+
+void check_cancel (void)
+{
+    flux_msg_t *op;
+    flux_msg_t *msg;
+    char *id;
+
+    if (!(msg = flux_msg_create (FLUX_MSGTYPE_REQUEST))
+        || flux_msg_set_userid (msg, 42) < 0
+        || flux_msg_set_rolemask (msg, FLUX_ROLE_USER) < 0
+        || flux_msg_set_matchtag (msg, 99) < 0
+        || flux_msg_set_topic (msg, "service.smurf") < 0
+        || flux_msg_enable_route (msg) < 0
+        || flux_msg_push_route (msg, "foo") < 0)
+        BAIL_OUT ("error creating message");
+    if (!(op = flux_msg_copy (msg, false))
+        || flux_msg_set_matchtag (op, 999) < 0
+        || flux_msg_set_topic (op, "service.smurf-cancel") < 0
+        || flux_msg_pack (op, "{s:i}", "matchtag", 99) < 0)
+        BAIL_OUT ("error adding payload to cancel mesage");
+
+    ok (flux_msg_match_cancel (op, msg) == true,
+        "flux_msg_match_cancel works");
+
+    ok (flux_msg_match_cancel (op, NULL) == false,
+        "flux_msg_match_cancel msg=NULL fails");
+    ok (flux_msg_match_cancel (NULL, msg) == false,
+        "flux_msg_match_cancel op=NULL fails");
+    ok (flux_msg_match_cancel (NULL, NULL) == false,
+        "flux_msg_match_cancel both=NULL fails");
+
+    /* mismatched matchtag */
+    if (flux_msg_set_matchtag (msg, 100) < 0)
+        BAIL_OUT ("error setting matchtag");
+    ok (flux_msg_match_cancel (op, msg) == false,
+        "flux_msg_match_cancel fails if matchtags are different");
+    if (flux_msg_set_matchtag (msg, 99) < 0)
+        BAIL_OUT ("error restoring matchtag");
+    ok (flux_msg_match_cancel (op, msg) == true,
+        "flux_msg_match_cancel works after matchtag restored");
+
+    /* mismatched userid */
+    if (flux_msg_set_userid (op, 1000) < 0)
+        BAIL_OUT ("error setting userid");
+    ok (flux_msg_match_cancel (op, msg) == false,
+        "flux_msg_match_cancel fails if userid's are different");
+    if (flux_msg_set_userid (op, 42) < 0)
+        BAIL_OUT ("error restoring userid");
+    ok (flux_msg_match_cancel (op, msg) == true,
+        "flux_msg_match_cancel works after userid restored");
+
+    /* mismatched sender */
+    if (flux_msg_pop_route (op, &id) < 0
+            || flux_msg_push_route (op, "bar") < 0)
+        BAIL_OUT ("error changing sender");
+    free (id);
+    ok (flux_msg_match_cancel (op, msg) == false,
+        "flux_msg_match_cancel fails if sender uuids are different");
+    if (flux_msg_pop_route (op, &id) < 0
+            || flux_msg_push_route (op, "foo") < 0)
+        BAIL_OUT ("error changing sender");
+    free (id);
+    ok (flux_msg_match_cancel (op, msg) == true,
+        "flux_msg_match_cancel works after sender restored");
+
+    flux_msg_destroy (msg);
+    flux_msg_destroy (op);
+}
+
 int main (int argc, char *argv[])
 {
     plan (NO_PLAN);
@@ -1037,6 +1152,9 @@ int main (int argc, char *argv[])
     check_params ();
 
     check_refcount();
+
+    check_disconnect ();
+    check_cancel ();
 
     //check_print ();
 
