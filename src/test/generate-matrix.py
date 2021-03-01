@@ -143,15 +143,15 @@ matrix.add_build(
     platform="linux/386",
 )
 
-# Ubuntu: gcc-8, content-s3, distcheck
+# Ubuntu: gcc-8, content-s3, pmix-bootstrap, distcheck
 matrix.add_build(
-    name="bionic - gcc-8,content-s3,distcheck",
+    name="bionic - gcc-8,content-s3,pmix-bootstrap,distcheck",
     env=dict(
         CC="gcc-8",
         CXX="g++8",
         DISTCHECK="t",
     ),
-    args="--with-flux-security --enable-caliper",
+    args="--with-flux-security --enable-caliper --enable-pmix-bootstrap",
     test_s3=True,
 )
 
@@ -169,7 +169,7 @@ matrix.add_build(
 )
 
 # Ubuntu: coverage
-matrix.add_build(name="coverage", coverage=True, jobs=2)
+matrix.add_build(name="coverage", coverage=True, jobs=2, args="--enable-pmix-bootstrap")
 
 # Ubuntu: TEST_INSTALL
 matrix.add_build(
