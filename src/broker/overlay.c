@@ -86,11 +86,19 @@ struct overlay {
 
     overlay_recv_f recv_cb;
     void *recv_arg;
+
+    struct flux_msglist *monitor_requests;
 };
 
 static void overlay_mcast_child (struct overlay *ov, const flux_msg_t *msg);
 static int overlay_sendmsg_child (struct overlay *ov, const flux_msg_t *msg);
 static int overlay_sendmsg_parent (struct overlay *ov, const flux_msg_t *msg);
+
+static void monitor_update (struct overlay *ov,
+                            struct child *child,
+                            const char *fmt, ...)
+                            __attribute__ ((format (printf, 3, 4)));
+
 
 /* Convenience iterator for ov->children
  */
@@ -195,6 +203,7 @@ void overlay_log_idle_children (struct overlay *ov)
                                   child->rank,
                                   fsd);
                         child->idle = true;
+                        monitor_update (ov, child, "idle for %s", fsd);
                     }
                 }
                 else {
@@ -204,6 +213,7 @@ void overlay_log_idle_children (struct overlay *ov)
                                   "child %lu no longer idle",
                                   child->rank);
                         child->idle = false;
+                        monitor_update (ov, child, "no longer idle");
                     }
                 }
             }
@@ -839,6 +849,164 @@ error:
         flux_log_error (h, "%s: flux_respond_error", __FUNCTION__);
 }
 
+/* Update all streaming monitor requests when 'child' status changes.
+ * A "reason" is sent along for the change (printf style), which may be of
+ * use for human consumption in a list of drained nodes or similar.
+ */
+static void monitor_update (struct overlay *ov,
+                            struct child *child,
+                            const char *fmt, ...)
+{
+    va_list ap;
+    const flux_msg_t *msg;
+    char reason[128];
+
+    va_start (ap, fmt);
+    vsnprintf (reason, sizeof (reason), fmt, ap);
+    va_end (ap);
+
+    msg = flux_msglist_first (ov->monitor_requests);
+    while (msg) {
+        if (flux_respond_pack (ov->h,
+                               msg,
+                               "{s:i s:b s:b s:s}",
+                                "rank", child->rank,
+                                "connected", child->connected ? 1 : 0,
+                                "idle", child->idle ? 1 : 0,
+                                "reason", reason) < 0)
+            flux_log_error (ov->h, "error responding to overlay.monitor");
+        msg = flux_msglist_next (ov->monitor_requests);
+    }
+}
+
+/* The overlay.monitor streaming RPC allows a client to maintain a mirror of
+ * the ov->children data structure.  The first response populates all entries.
+ * Subsequent responses update one entry, when connected/idle status changes.
+ * If there are no children in topology, return ENODATA immedaitely.
+ */
+static void monitor_cb (flux_t *h,
+                        flux_msg_handler_t *mh,
+                        const flux_msg_t *msg,
+                        void *arg)
+{
+    struct overlay *ov = arg;
+    uint8_t flags;
+    struct child *child;
+    json_t *o = NULL;
+    const char *errstr = NULL;
+
+    if (flux_request_decode (msg, NULL, NULL) < 0
+        || flux_msg_get_flags  (msg, &flags) < 0)
+        goto error;
+    if (ov->child_count == 0) {
+        errno = ENODATA;
+        errstr = "no children";
+        goto error;
+    }
+    if (!(o = json_array ()))
+        goto nomem;
+    foreach_overlay_child (ov, child) {
+        json_t *entry;
+        if (!(entry = json_pack ("{s:i s:b s:b}",
+                                 "rank", child->rank,
+                                 "connected", child->connected ? 1 : 0,
+                                 "idle", child->idle ? 1 : 0)))
+            goto nomem;
+        if (json_array_append_new (o, entry) < 0) {
+            json_decref (entry);
+            goto nomem;
+        }
+    }
+    if (flux_respond_pack (h, msg, "{s:O}", "children", o) < 0)
+        flux_log_error (h, "error responding to overlay.monitor");
+    if ((flags & FLUX_MSGFLAG_STREAMING)) {
+        if (flux_msglist_append (ov->monitor_requests, msg) < 0)
+            goto error;
+    }
+    json_decref (o);
+    return;
+nomem:
+    errno = ENOMEM;
+error:
+    ERRNO_SAFE_WRAP (json_decref, o);
+    if (flux_respond_error (h, msg, errno, errstr) < 0)
+        flux_log_error (h, "error responding to overlay.monitor");
+}
+
+/* Trigger a monitor update that contains test data.
+ * This has no effect on the ov->children array.
+ */
+static void monitor_test_cb (flux_t *h,
+                             flux_msg_handler_t *mh,
+                             const flux_msg_t *msg,
+                             void *arg)
+{
+    struct overlay *ov = arg;
+    int connected;
+    int idle;
+    const char *reason;
+    struct child child;
+
+    if (flux_request_unpack (msg,
+                             NULL,
+                             "{s:i s:b s:b s:s}",
+                             "rank", &child.rank,
+                             "connected", &connected,
+                             "idle", &idle,
+                             "reason", &reason) < 0)
+        goto error;
+    child.connected = connected ? true : false;
+    child.idle = idle ? true : false;
+    monitor_update (ov, &child, "testing: %s", reason);
+    if (flux_respond (h, msg, NULL) < 0)
+        flux_log_error (h, "error responding to overlay.monitor-test");
+    return;
+error:
+    if (flux_respond_error (h, msg, errno, NULL) < 0)
+        flux_log_error (h, "error responding to overlay.monitor-test");
+}
+
+/* Handle cancellation of overlay.monitor streaming RPC.
+ */
+static void monitor_cancel_cb (flux_t *h,
+                               flux_msg_handler_t *mh,
+                               const flux_msg_t *msg,
+                               void *arg)
+{
+    struct overlay *ov = arg;
+
+    if (flux_msglist_cancel (h, ov->monitor_requests, msg) < 0)
+        flux_log_error (h, "error canceling overlay.monitor");
+}
+
+/* Handle disconnecting user of overlay.monitor streaming RPC.
+ */
+static void disconnect_cb (flux_t *h,
+                           flux_msg_handler_t *mh,
+                           const flux_msg_t *msg,
+                           void *arg)
+{
+    struct overlay *ov = arg;
+
+    if (flux_msglist_disconnect (ov->monitor_requests, msg) < 0)
+        flux_log_error (h, "error handling overlay.disconnect");
+}
+
+static void stats_get_cb (flux_t *h,
+                          flux_msg_handler_t *mh,
+                          const flux_msg_t *msg,
+                          void *arg)
+{
+    struct overlay *ov = arg;
+
+    if (flux_respond_pack (h,
+                           msg,
+                           "{s:i}",
+                           "monitor-requests",
+                           flux_msglist_count (ov->monitor_requests)) < 0)
+        flux_log_error (h, "error responding to overlay.stats-get");
+}
+
 int overlay_cert_load (struct overlay *ov, const char *path)
 {
     struct stat sb;
@@ -906,6 +1074,8 @@ void overlay_destroy (struct overlay *ov)
         }
         zcertstore_destroy (&ov->certstore);
 
+        flux_msglist_destroy (ov->monitor_requests);
+
         flux_future_destroy (ov->f_sync);
         flux_msg_handler_delvec (ov->handlers);
         overlay_keepalive_parent (ov, KEEPALIVE_STATUS_DISCONNECT);
@@ -927,6 +1097,11 @@ void overlay_destroy (struct overlay *ov)
 
 static const struct flux_msg_handler_spec htab[] = {
     { FLUX_MSGTYPE_REQUEST,  "overlay.lspeer", lspeer_cb, 0 },
+    { FLUX_MSGTYPE_REQUEST,  "overlay.monitor", monitor_cb, 0 },
+    { FLUX_MSGTYPE_REQUEST,  "overlay.monitor-test", monitor_test_cb, 0 },
+    { FLUX_MSGTYPE_REQUEST,  "overlay.monitor-cancel", monitor_cancel_cb, 0 },
+    { FLUX_MSGTYPE_REQUEST,  "overlay.disconnect", disconnect_cb, 0 },
+    { FLUX_MSGTYPE_REQUEST,  "overlay.stats.get", stats_get_cb, 0 },
     FLUX_MSGHANDLER_TABLE_END,
 };
 
@@ -950,6 +1125,8 @@ struct overlay *overlay_create (flux_t *h, overlay_recv_f cb, void *arg)
         goto nomem;
     if (!(ov->certstore = zcertstore_new (NULL)))
         goto nomem;
+    if (!(ov->monitor_requests = flux_msglist_create ()))
+        goto error;
     return ov;
 nomem:
     errno = ENOMEM;
