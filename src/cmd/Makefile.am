@@ -95,6 +95,7 @@ flux_start_LDADD = \
 
 flux_job_LDADD = \
 	$(fluxcmd_ldadd) \
+	$(top_builddir)/src/common/libjob/libjob.la \
 	$(top_builddir)/src/shell/libmpir.la \
 	$(top_builddir)/src/common/libczmqcontainers/libczmqcontainers.la \
 	$(top_builddir)/src/common/libdebugged/libdebugged.la \

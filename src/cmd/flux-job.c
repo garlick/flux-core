@@ -37,8 +37,10 @@
 #include "src/common/libutil/xzmalloc.h"
 #include "src/common/libutil/log.h"
 #include "src/common/libjob/job.h"
+#include "src/common/libjob/specutil.h"
 #include "src/common/libutil/read_all.h"
 #include "src/common/libutil/monotime.h"
+#include "src/common/libutil/errno_safe.h"
 #include "src/common/libidset/idset.h"
 #include "src/common/libeventlog/eventlog.h"
 #include "src/common/libioencode/ioencode.h"
@@ -90,6 +92,7 @@ int cmd_info (optparse_t *p, int argc, char **argv);
 int cmd_stats (optparse_t *p, int argc, char **argv);
 int cmd_wait (optparse_t *p, int argc, char **argv);
 int cmd_annotate (optparse_t *p, int argc, char **argv);
+int cmd_exec (optparse_t *p, int argc, char **argv);
 
 int stdin_flags;
 
@@ -325,6 +328,26 @@ static struct optparse_option wait_opts[] =  {
     OPTPARSE_TABLE_END
 };
 
+static struct optparse_option exec_opts[] =  {
+    { .name = "ntasks", .key = 'n', .has_arg = 1, .arginfo = "N",
+      .usage = "Run N tasks (default 1)"
+    },
+    { .name = "cores-per-task", .key = 'c', .has_arg = 1, .arginfo = "N",
+      .usage = "Number of cores to allocate per task (default 1)"
+    },
+    { .name = "gpus-per-task", .key = 'g', .has_arg = 1, .arginfo = "N",
+      .usage = "Number of GPUs to allocate per task (default 0)"
+    },
+    { .name = "label-io", .key = 'l', .has_arg = 0,
+      .usage = "Label output by rank",
+    },
+    { .name = "setopt", .key = 'o', .has_arg = 1, .arginfo = "OPT",
+      .usage = "Set shell option OPT[=VAL] (default VAL=1)",
+      .flags = OPTPARSE_OPT_AUTOSPLIT,
+    },
+    OPTPARSE_TABLE_END
+};
+
 static struct optparse_subcommand subcommands[] = {
     { "list",
       "[OPTIONS]",
@@ -473,6 +496,13 @@ static struct optparse_subcommand subcommands[] = {
       cmd_annotate,
       0,
       NULL,
+    },
+    { "exec",
+      "[OPTIONS]",
+      "Run job job to completion",
+      cmd_exec,
+      0,
+      exec_opts,
     },
     OPTPARSE_SUBCMD_END
 };
@@ -3019,6 +3049,190 @@ int cmd_annotate (optparse_t *p, int argc, char **argv)
     flux_close (h);
     free (valbuf);
     return (0);
+}
+
+static json_t *make_shell_options (optparse_t *p)
+{
+    json_t *opt;
+    const char *arg;
+
+    if (!(opt = json_object ()))
+        goto nomem;
+    if (specutil_attr_pack (opt,
+                            "input.stdin",
+                            "{s:s s:s}",
+                            "type", "file",
+                            "path", "/dev/null") < 0)
+        goto error;
+
+    if (optparse_hasopt (p, "setopt")) {
+        optparse_getopt_iterator_reset (p, "setopt");
+        while ((arg = optparse_getopt_next (p, "setopt"))) {
+            char *key, *val;
+            int rc;
+
+            if (!(key = strdup (arg)))
+                goto nomem;
+            if ((val = strchr (key, '=')))
+                *val++ = '\0';
+            if (val && *val)
+                rc = specutil_attr_pack (opt, key, "s", val);
+            else
+                rc = specutil_attr_pack (opt, key, "i", 1);
+            ERRNO_SAFE_WRAP (free, key);
+            if (rc < 0)
+                goto error;
+        }
+    }
+    return opt;
+nomem:
+    errno = ENOMEM;
+error:
+    ERRNO_SAFE_WRAP (json_decref, opt);
+    return NULL;
+}
+
+static json_t *make_attribute_object (optparse_t *p,
+                                      json_t *env,
+                                      const char *cwd)
+{
+    json_t *attr;
+    json_t *opt;
+
+    if (!(attr = json_object ())) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    if (!(opt = make_shell_options (p)))
+        goto error;
+    if (specutil_attr_pack (attr, "system.duration", "f", 0.) < 0
+        || specutil_attr_pack (attr, "system.cwd", "s", cwd) < 0
+        || specutil_attr_set (attr, "system.shell.options", opt) < 0
+        || specutil_attr_set (attr, "system.environment", env) < 0) {
+        goto error;
+    }
+    json_decref (opt);
+    return attr;
+error:
+    ERRNO_SAFE_WRAP (json_decref, attr);
+    ERRNO_SAFE_WRAP (json_decref, opt);
+    return NULL;
+}
+
+static void dump_job_output_entry (json_t *entry, bool label_io)
+{
+    const char *name;
+    json_t *context;
+    const char *stream, *rank, *data;
+
+    if (eventlog_entry_parse (entry, NULL, &name, &context) < 0
+        || strcmp (name, "data") != 0
+        || json_unpack (context,
+                        "{s:s s:s s:s}",
+                        "stream", &stream,
+                        "rank", &rank,
+                        "data", &data) < 0
+        || (strcmp (stream, "stdout") != 0 && strcmp (stream, "stderr") != 0))
+        return;
+    fprintf (!strcmp (stream, "stdout") ? stdout : stderr,
+             "%s%s%s",
+             label_io ? rank : "",
+             label_io ? ": " : "",
+             data);
+}
+
+static void dump_job_output (flux_t *h, flux_jobid_t id, bool label_io)
+{
+    flux_future_t *f;
+    char key[1024];
+    const char *val;
+    json_t *eventlog;
+    size_t index;
+    json_t *entry;
+
+    if (flux_job_kvs_key (key, sizeof (key), id, "guest.output") < 0)
+        log_err_exit ("failed to build guest.output key");
+    if (!(f = flux_kvs_lookup (h, NULL, 0, key)))
+        log_err_exit ("error sending KVS lookup");
+
+    /* If output is missing, it may be due to an exception that prevented
+     * the job from starting.  Return and let the exception be reported.
+     */
+    if (flux_kvs_lookup_get (f, &val) == 0) {
+        if (!(eventlog = eventlog_decode (val)))
+            log_err_exit ("failed to decode guest.output");
+        // N.B. header ignored, UTF-8 encoding assumed
+        json_array_foreach (eventlog, index, entry) {
+            dump_job_output_entry (entry, label_io);
+        }
+        json_decref (eventlog);
+    }
+    flux_future_destroy (f);
+}
+
+int cmd_exec (optparse_t *p, int argc, char **argv)
+{
+    int optindex = optparse_option_index (p);
+    char cwd[1024];
+    json_t *command;
+    json_t *environment;
+    json_t *attributes;
+    flux_t *h;
+    flux_future_t *f;
+    flux_jobid_t id;
+    int success;
+    const char *errstr;
+
+    if (argc == optindex) {
+        optparse_print_usage (p);
+        return (1);
+    }
+    if (!(command = specutil_argv_create (argc - optindex, argv + optindex)))
+        log_err_exit ("error creating argv object");
+    if (!(environment = specutil_env_create (environ)))
+        log_err_exit ("error creating environment object");
+    if (!getcwd (cwd, sizeof (cwd)))
+        log_err_exit ("getcwd");
+    if (!(attributes = make_attribute_object (p, environment, cwd)))
+        log_err_exit ("error creating attribute object");
+
+    if (!(h = flux_open (NULL, 0)))
+        log_err_exit ("flux_open");
+
+    if (!(f = flux_rpc_pack (h,
+                             "job-manager.runjob",
+                             FLUX_NODEID_ANY,
+                             0,
+                             "{s:o s:o s:i s:i s:i}",
+                             "command", command,
+                             "attributes", attributes,
+                             "ntasks",
+                                optparse_get_int (p, "ntasks", 1),
+                             "cores-per-task",
+                                optparse_get_int (p, "cores-per-task", 1),
+                             "gpus-per-task",
+                                optparse_get_int (p, "gpus-per-task", 0))))
+        log_err_exit ("error submitting job");
+    if (flux_rpc_get_unpack (f,
+                             "{s:I s:b s:s}",
+                             "id", &id,
+                             "success", &success,
+                             "errstr", &errstr) < 0)
+        log_msg_exit ("error submitting job: %s",
+                      future_strerror (f, errno));
+
+    dump_job_output (h, id, optparse_hasopt (p, "label-io"));
+
+    if (!success)
+        fprintf (stderr, "%s\n", errstr);
+
+    flux_future_destroy (f);
+    flux_close (h);
+
+    json_decref (attributes);
+    json_decref (environment);
+
+    return (success ? 0 : 1);
 }
 
 /*
