@@ -138,6 +138,34 @@ static int decode_job_result (struct job *job,
     return 0;
 }
 
+int wait_set_waiter (struct waitjob *wait,
+                     struct job *job,
+                     const flux_msg_t *msg)
+{
+    if (job_aux_set (job,
+                     "wait::request",
+                     (void *)flux_msg_incref (msg),
+                     (flux_free_f)flux_msg_decref) < 0) {
+        flux_msg_decref (msg);
+        return -1;
+    }
+    wait->waiters++;
+    return 0;
+}
+
+const flux_msg_t *wait_get_waiter (struct job *job)
+{
+    return job_aux_get (job, "wait::request");
+}
+
+void wait_clear_waiter (struct waitjob *wait, struct job *job)
+{
+    if (job_aux_get (job, "wait::request")) {
+        job_aux_set (job, "wait::request", NULL, NULL);
+        wait->waiters--;
+    }
+}
+
 /* Respond to wait request 'msg' with completion info from 'job'.
  */
 static void wait_respond (struct waitjob *wait,
@@ -182,11 +210,9 @@ void wait_notify_inactive (struct waitjob *wait, struct job *job)
 
     assert ((job->flags & FLUX_JOB_WAITABLE));
 
-    if (job->waiter) {
-        wait_respond (wait, job->waiter, job);
-        flux_msg_decref (job->waiter);
-        job->waiter = NULL;
-        wait->waiters--;
+    if ((req = wait_get_waiter (job))) {
+        wait_respond (wait, req, job);
+        wait_clear_waiter (wait, job);
     }
     else if ((req = flux_msglist_first (wait->requests))) {
         wait_respond (wait, req, job);
@@ -247,7 +273,7 @@ static void wait_rpc (flux_t *h,
         /* If job is still active, enqueue the request.
          */
         else if ((job = zhashx_lookup (ctx->active_jobs, &id))) {
-            if (job->waiter) {
+            if (wait_get_waiter (job)) {
                 errstr = "job id already has a waiter";
                 goto error_nojob;
             }
@@ -255,8 +281,10 @@ static void wait_rpc (flux_t *h,
                 errstr = "job was not submitted with FLUX_JOB_WAITABLE";
                 goto error_nojob;
             }
-            job->waiter = flux_msg_incref (msg);
-            wait->waiters++;
+            if (wait_set_waiter (wait, job, msg) < 0) {
+                errstr = "error establishing wait context";
+                goto error;
+            }
             return;
         }
         /* Invalid jobid, not waitable, or already waited on.
@@ -306,12 +334,10 @@ void wait_disconnect_rpc (flux_t *h,
 
     job = zhashx_first (ctx->active_jobs);
     while (job && wait->waiters > 0) {
-        if (job->waiter) {
-            if (flux_msg_match_route_first (job->waiter, msg)) {
-                flux_msg_decref (job->waiter);
-                job->waiter = NULL;
-                wait->waiters--;
-            }
+        const flux_msg_t *req;
+        if ((req = wait_get_waiter (job))) {
+            if (flux_msg_match_route_first (msg, req))
+                wait_clear_waiter (wait, job);
         }
         job = zhashx_next (ctx->active_jobs);
     }
@@ -350,11 +376,11 @@ void wait_ctx_destroy (struct waitjob *wait)
          */
         job = zhashx_first (wait->ctx->active_jobs);
         while (job && wait->waiters > 0) {
-            if (job->waiter) {
-                respond_unloading (h, job->waiter);
-                flux_msg_decref (job->waiter);
-                job->waiter = NULL;
-                wait->waiters--;
+            const flux_msg_t *msg;
+
+            if ((msg = wait_get_waiter (job))) {
+                respond_unloading (h, msg);
+                wait_clear_waiter (wait, job);
             }
             job = zhashx_next (wait->ctx->active_jobs);
         }
