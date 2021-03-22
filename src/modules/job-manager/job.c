@@ -28,7 +28,6 @@ void job_decref (struct job *job)
 {
     if (job && --job->refcount == 0) {
         int saved_errno = errno;
-        json_decref (job->end_event);
         json_decref (job->jobspec_redacted);
         json_decref (job->annotations);
         grudgeset_destroy (job->dependencies);
