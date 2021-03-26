@@ -48,6 +48,12 @@ struct batch {
     struct idset *down;
 };
 
+struct child {
+    int rank;
+    int connected;
+    int idle;
+};
+
 struct monitor {
     struct resource_ctx *ctx;
     struct batch *batch;
@@ -59,6 +65,13 @@ struct monitor {
     flux_msg_handler_t **handlers;
 
     struct idset *down; // cached result of monitor_get_down()
+
+    /* A streaming RPC keeps this synchronized with similar array
+     * of TBON children in broker/overlay.c
+     */
+    flux_future_t *f_overlay;
+    struct child *children;
+    int child_count;
 };
 
 static int monitor_reduce (flux_t *h, struct idset *up, struct idset *dn);
@@ -394,6 +407,87 @@ static int publish_reload (flux_t *h)
     return 0;
 }
 
+static struct child *find_child (struct monitor *monitor, int rank)
+{
+    int i;
+    for (i = 0; i < monitor->child_count; i++)
+        if (monitor->children[i].rank == rank)
+            return &monitor->children[i];
+    return NULL;
+}
+
+static void overlay_monitor_continuation (flux_future_t *f, void *arg)
+{
+    struct monitor *monitor = arg;
+    struct resource_ctx *ctx = monitor->ctx;
+    struct child child;
+    struct child *chp;
+    const char *reason;
+
+    if (flux_rpc_get_unpack (f,
+                             "{s:i s:b s:b s:s}",
+                             "rank",      &child.rank,
+                             "connected", &child.connected,
+                             "idle",      &child.idle,
+                             "reason",    &reason) < 0) {
+        flux_log_error (ctx->h, "overlay.monitor error");
+        return;
+    }
+    if ((chp = find_child (monitor, child.rank))) {
+        flux_log (ctx->h, LOG_DEBUG, "%d: %s", child.rank, reason);
+        *chp = child;
+    }
+    flux_future_reset (f);
+}
+
+static int overlay_monitor (struct monitor *monitor, flux_future_t **fp)
+{
+    flux_t *h = monitor->ctx->h;
+    flux_future_t *f;
+    json_t *children;
+    size_t index;
+    json_t *entry;
+
+    if (!(f = flux_rpc (h,
+                        "overlay.monitor",
+                        NULL,
+                        FLUX_NODEID_ANY,
+                        FLUX_RPC_STREAMING)))
+        return -1;
+    if (flux_rpc_get_unpack (f, "{s:o}", "children", &children) < 0) {
+        if (errno == ENODATA) {
+            flux_future_destroy (f);
+            return 0; // leaf node
+        }
+        flux_log_error (h, "overlay.monitor (initial) error");
+        goto error;
+    }
+    monitor->child_count = json_array_size (children);
+    if (!(monitor->children = calloc (monitor->child_count,
+                                      sizeof (struct child))))
+        goto error;
+    flux_log (h, LOG_DEBUG, "watching %d TBON children", monitor->child_count);
+    json_array_foreach (children, index, entry) {
+        if (json_unpack (entry,
+                         "{s:i s:b s:b}",
+                         "rank",        &monitor->children[index].rank,
+                         "connected",   &monitor->children[index].connected,
+                         "idle",        &monitor->children[index].idle) < 0) {
+            errno = EPROTO;
+            flux_log_error (h, "overlay.monitor index=%zu error", index);
+            goto error;
+        }
+    }
+    flux_future_reset (f);
+    if (flux_future_then (f, -1, overlay_monitor_continuation, monitor) < 0)
+        goto error;
+    *fp = f;
+    return 0;
+error:
+    flux_future_destroy (f);
+    return -1;
+}
+
 static const struct flux_msg_handler_spec htab[] = {
     { FLUX_MSGTYPE_REQUEST,  "resource.monitor-waitup", waitup_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "resource.monitor-reduce", reduce_cb, 0 },
@@ -420,6 +514,8 @@ void monitor_destroy (struct monitor *monitor)
         flux_msg_handler_delvec (monitor->handlers);
         idset_destroy (monitor->up);
         idset_destroy (monitor->down);
+        flux_future_destroy (monitor->f_overlay);
+        free (monitor->children);
         free (monitor);
         errno = saved_errno;
     }
@@ -466,6 +562,8 @@ struct monitor *monitor_create (struct resource_ctx *ctx,
         if (publish_reload (ctx->h) < 0)
             goto error;
     }
+    if (overlay_monitor (monitor, &monitor->f_overlay) < 0)
+        goto error;
     return monitor;
 error:
     monitor_destroy (monitor);
