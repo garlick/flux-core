@@ -79,6 +79,7 @@ TESTSCRIPTS = \
 	t0021-flux-jobspec.t \
 	t0022-jj-reader.t \
 	t0026-flux-R.t \
+	t0027-broker-overlay-monitor.t \
 	t1000-kvs.t \
 	t1001-kvs-internals.t \
 	t1003-kvs-stress.t \
