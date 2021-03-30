@@ -33,6 +33,7 @@
 enum {
     KEEPALIVE_STATUS_NORMAL = 0,
     KEEPALIVE_STATUS_DISCONNECT = 1,
+    KEEPALIVE_STATUS_TEST_PAUSE = 2,
 };
 
 struct child {
@@ -41,6 +42,7 @@ struct child {
     char uuid[16];
     bool connected;
     bool idle;
+    bool test_pause;
 };
 
 /* Wake up periodically (between 'sync_min' and 'sync_max' seconds) and:
@@ -196,7 +198,7 @@ void overlay_log_idle_children (struct overlay *ov)
             if (child->connected) {
                 idle = now - child->lastseen;
 
-                if (idle >= idle_max) {
+                if (idle >= idle_max || child->test_pause) {
                     (void)fsd_format_duration (fsd, sizeof (fsd), idle);
                     if (!child->idle) {
                         flux_log (ov->h,
@@ -485,6 +487,7 @@ static void child_cb (flux_reactor_t *r, flux_watcher_t *w,
     struct child *child;
     int status;
     bool connected = true;
+    bool test_pause = false;
 
     if (!(msg = flux_msg_recvzsock (ov->bind_zsock)))
         return;
@@ -499,9 +502,11 @@ static void child_cb (flux_reactor_t *r, flux_watcher_t *w,
     }
     switch (type) {
         case FLUX_MSGTYPE_KEEPALIVE:
-            if (flux_keepalive_decode (msg, NULL, &status) == 0
-                && status == KEEPALIVE_STATUS_DISCONNECT) {
-                connected = false;
+            if (flux_keepalive_decode (msg, NULL, &status) == 0) {
+                if (status == KEEPALIVE_STATUS_DISCONNECT)
+                    connected = false;
+                else if (status == KEEPALIVE_STATUS_TEST_PAUSE)
+                    test_pause = true;
             }
             break;
         case FLUX_MSGTYPE_REQUEST:
@@ -522,6 +527,14 @@ static void child_cb (flux_reactor_t *r, flux_watcher_t *w,
     if (child->connected != connected) {
         child->connected = connected;
         overlay_monitor_notify (ov);
+    }
+    /* If child notifies us that it is entering test pause mode,
+     * then it is convenent for testing to immediately log the
+     * child as idle (not to wait for the sync callback).
+     */
+    if (child->test_pause != test_pause) {
+        child->test_pause = test_pause;
+        overlay_log_idle_children (ov);
     }
     if (type != FLUX_MSGTYPE_KEEPALIVE)
         ov->recv_cb (msg, OVERLAY_DOWNSTREAM, ov->recv_arg);
@@ -993,6 +1006,7 @@ static void overlay_pause_cb (flux_t *h,
            flux_log_error (h, "error responding to overlay.pause");
     }
     else {
+        overlay_keepalive_parent (ov, KEEPALIVE_STATUS_TEST_PAUSE);
         if (!(l = flux_msglist_create ()))
             goto error;
         if (flux_respond (h, msg, NULL) < 0)
