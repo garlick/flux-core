@@ -952,19 +952,6 @@ error:
         flux_log_error (h, "error responding to overlay.monitor");
 }
 
-/* Handle cancellation of overlay.monitor streaming RPC.
- */
-static void monitor_cancel_cb (flux_t *h,
-                               flux_msg_handler_t *mh,
-                               const flux_msg_t *msg,
-                               void *arg)
-{
-    struct overlay *ov = arg;
-
-    if (flux_msglist_cancel (h, ov->monitor_requests, msg) < 0)
-        flux_log_error (h, "error canceling overlay.monitor");
-}
-
 /* Handle disconnecting user of overlay.monitor streaming RPC.
  */
 static void disconnect_cb (flux_t *h,
@@ -981,6 +968,8 @@ static void disconnect_cb (flux_t *h,
 /* overlay.pause is for simulating an idle peer in test.  It is a toggle.
  * When turned on, messages to parent are enqueued to ov->test_backlog.
  * When turned off, the backlog is sent and normal operations resume.
+ * In addition, send a TEST_PAUSE keepalive message to parent when entering
+ * pause to expedite idle detection.
  */
 static void overlay_pause_cb (flux_t *h,
                              flux_msg_handler_t *mh,
@@ -1126,7 +1115,6 @@ static const struct flux_msg_handler_spec htab[] = {
     { FLUX_MSGTYPE_REQUEST,  "overlay.lspeer", lspeer_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "overlay.monitor", monitor_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "overlay.pause", overlay_pause_cb, 0 },
-    { FLUX_MSGTYPE_REQUEST,  "overlay.monitor-cancel", monitor_cancel_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "overlay.disconnect", disconnect_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "overlay.stats.get", stats_get_cb, 0 },
     FLUX_MSGHANDLER_TABLE_END,
