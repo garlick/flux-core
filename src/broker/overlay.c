@@ -88,6 +88,8 @@ struct overlay {
     void *recv_arg;
 
     struct flux_msglist *monitor_requests;
+
+    struct flux_msglist *test_backlog; // NULL when not "paused"
 };
 
 static void overlay_mcast_child (struct overlay *ov, const flux_msg_t *msg);
@@ -260,9 +262,13 @@ static int overlay_sendmsg_parent (struct overlay *ov, const flux_msg_t *msg)
         errno = EHOSTUNREACH;
         goto done;
     }
-    rc = flux_msg_sendzsock (ov->parent_zsock, msg);
-    if (rc == 0)
-        ov->parent_lastsent = flux_reactor_now (flux_get_reactor (ov->h));
+    if (ov->test_backlog)
+        rc = flux_msglist_append (ov->test_backlog, msg);
+    else {
+        rc = flux_msg_sendzsock (ov->parent_zsock, msg);
+        if (rc == 0)
+            ov->parent_lastsent = flux_reactor_now (flux_get_reactor (ov->h));
+    }
 done:
     return rc;
 }
@@ -933,39 +939,6 @@ error:
         flux_log_error (h, "error responding to overlay.monitor");
 }
 
-/* Trigger a monitor update that contains test data.
- * This has no effect on the ov->children array.
- */
-static void monitor_test_cb (flux_t *h,
-                             flux_msg_handler_t *mh,
-                             const flux_msg_t *msg,
-                             void *arg)
-{
-    struct overlay *ov = arg;
-    int connected;
-    int idle;
-    const char *reason;
-    struct child child;
-
-    if (flux_request_unpack (msg,
-                             NULL,
-                             "{s:i s:b s:b s:s}",
-                             "rank", &child.rank,
-                             "connected", &connected,
-                             "idle", &idle,
-                             "reason", &reason) < 0)
-        goto error;
-    child.connected = connected ? true : false;
-    child.idle = idle ? true : false;
-    monitor_update (ov, &child, "testing: %s", reason);
-    if (flux_respond (h, msg, NULL) < 0)
-        flux_log_error (h, "error responding to overlay.monitor-test");
-    return;
-error:
-    if (flux_respond_error (h, msg, errno, NULL) < 0)
-        flux_log_error (h, "error responding to overlay.monitor-test");
-}
-
 /* Handle cancellation of overlay.monitor streaming RPC.
  */
 static void monitor_cancel_cb (flux_t *h,
@@ -990,6 +963,46 @@ static void disconnect_cb (flux_t *h,
 
     if (flux_msglist_disconnect (ov->monitor_requests, msg) < 0)
         flux_log_error (h, "error handling overlay.disconnect");
+}
+
+/* overlay.pause is for simulating an idle peer in test.  It is a toggle.
+ * When turned on, messages to parent are enqueued to ov->test_backlog.
+ * When turned off, the backlog is sent and normal operations resume.
+ */
+static void overlay_pause_cb (flux_t *h,
+                             flux_msg_handler_t *mh,
+                             const flux_msg_t *msg,
+                             void *arg)
+{
+    struct overlay *ov = arg;
+    struct flux_msglist *l;
+    const flux_msg_t *old;
+
+    if (flux_request_decode (msg, NULL, NULL) < 0)
+        goto error;
+    if (ov->test_backlog) {
+        l = ov->test_backlog;
+        ov->test_backlog = NULL;
+        while ((old = flux_msglist_pop (l))) {
+            if (overlay_sendmsg_parent (ov, old) < 0)
+                flux_log_error (h, "error sending a backlog message");
+            flux_msg_decref (old);
+        }
+        flux_msglist_destroy (l);
+        if (flux_respond (h, msg, NULL) < 0)
+           flux_log_error (h, "error responding to overlay.pause");
+    }
+    else {
+        if (!(l = flux_msglist_create ()))
+            goto error;
+        if (flux_respond (h, msg, NULL) < 0)
+           flux_log_error (h, "error responding to overlay.pause");
+        ov->test_backlog = l;
+    }
+    return;
+error:
+    if (flux_respond_error (h, msg, errno, NULL) < 0)
+        flux_log_error (h, "error responding to overlay.pause");
 }
 
 static void stats_get_cb (flux_t *h,
@@ -1098,7 +1111,7 @@ void overlay_destroy (struct overlay *ov)
 static const struct flux_msg_handler_spec htab[] = {
     { FLUX_MSGTYPE_REQUEST,  "overlay.lspeer", lspeer_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "overlay.monitor", monitor_cb, 0 },
-    { FLUX_MSGTYPE_REQUEST,  "overlay.monitor-test", monitor_test_cb, 0 },
+    { FLUX_MSGTYPE_REQUEST,  "overlay.pause", overlay_pause_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "overlay.monitor-cancel", monitor_cancel_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "overlay.disconnect", disconnect_cb, 0 },
     { FLUX_MSGTYPE_REQUEST,  "overlay.stats.get", stats_get_cb, 0 },

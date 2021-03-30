@@ -21,7 +21,6 @@ mon_rpc_streaming () {
 mon_rpc_streaming_cancel () {
         flux python - <<EOT
 import flux
-import errno
 from flux.core.inner import raw
 h = flux.Flux()
 f = h.rpc("overlay.monitor",nodeid=$1,flags=flux.constants.FLUX_RPC_STREAMING)
