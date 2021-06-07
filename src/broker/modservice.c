@@ -35,11 +35,15 @@
 #include "ping.h"
 #include "rusage.h"
 
+#define FRIPP_ENABLE_MSGCOUNT (0x1000)
+
 typedef struct {
     flux_t *h;
     module_t *p;
     zlist_t *handlers;
     flux_watcher_t *w_prepare;
+    bool running;
+    flux_msgcounters_t last_mcs; // avoid sending FRIPP metric if unchanged
 } modservice_ctx_t;
 
 static void freectx (void *arg)
@@ -116,6 +120,7 @@ static void shutdown_cb (flux_t *h, flux_msg_handler_t *mh,
 static void debug_cb (flux_t *h, flux_msg_handler_t *mh,
                       const flux_msg_t *msg, void *arg)
 {
+    modservice_ctx_t *ctx = arg;
     int flags;
     int *debug_flags;
     const char *op;
@@ -142,6 +147,9 @@ static void debug_cb (flux_t *h, flux_msg_handler_t *mh,
         errno = EPROTO;
         goto error;
     }
+    if (*debug_flags & FRIPP_ENABLE_MSGCOUNT)
+        flux_watcher_start (ctx->w_prepare);
+
     if (flux_respond_pack (h, msg, "{s:i}", "flags", *debug_flags) < 0)
         flux_log_error (h, "%s: flux_respond", __FUNCTION__);
     return;
@@ -156,19 +164,38 @@ static void prepare_cb (flux_reactor_t *r, flux_watcher_t *w,
                         int revents, void *arg)
 {
     modservice_ctx_t *ctx = arg;
+    int *debug_flags;
 
     /*  Notify broker that this module has finished initialization
-     */
-    flux_msg_t *msg = flux_keepalive_encode (0, FLUX_MODSTATE_RUNNING);
-    if (!msg || flux_send (ctx->h, msg, 0) < 0)
-        flux_log_error (ctx->h, "error sending keepalive");
-    flux_msg_destroy (msg);
-
-    /*  Then, disable te prepare watcher. We no longer send keepalive
+     *   This occurs only once - we no longer send keepalive
      *   messages on every entry/exit of the reactor.
      */
-    flux_watcher_destroy (ctx->w_prepare);
-    ctx->w_prepare = NULL;
+    if (!ctx->running) {
+        flux_msg_t *msg = flux_keepalive_encode (0, FLUX_MODSTATE_RUNNING);
+        if (!msg || flux_send (ctx->h, msg, 0) < 0)
+            flux_log_error (ctx->h, "error sending keepalive");
+        flux_msg_destroy (msg);
+        ctx->running = true;
+    }
+
+    /*  Then, send metric if enabled, or stop watcher if no longer needed.
+     */
+    if ((debug_flags = flux_aux_get (ctx->h, "flux::debug_flags"))
+        && *debug_flags & FRIPP_ENABLE_MSGCOUNT) {
+        flux_msgcounters_t mcs;
+
+        flux_get_msgcounters (ctx->h, &mcs);
+        if (memcmp (&mcs, &ctx->last_mcs, sizeof (mcs)) != 0) {
+            /* FIXME: send metric here instead of logging */
+            flux_log (ctx->h, LOG_DEBUG, "%s request_rx=%d response_tx=%d",
+                      module_get_name (ctx->p),
+                      mcs.request_rx,
+                      mcs.response_tx);
+            ctx->last_mcs = mcs;
+        }
+    }
+    else
+        flux_watcher_stop (ctx->w_prepare);
 }
 
 static int register_event (modservice_ctx_t *ctx, const char *name,
