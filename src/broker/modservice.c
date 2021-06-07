@@ -185,7 +185,7 @@ static int register_event (modservice_ctx_t *ctx, const char *name,
         log_err ("asprintf");
         goto cleanup;
     }
-    if (!(mh = flux_msg_handler_create (ctx->h, match, cb, ctx->p))) {
+    if (!(mh = flux_msg_handler_create (ctx->h, match, cb, ctx))) {
         log_err ("flux_msg_handler_create");
         goto cleanup;
     }
@@ -222,7 +222,7 @@ static int register_request (modservice_ctx_t *ctx, const char *name,
         log_err ("asprintf");
         goto cleanup;
     }
-    if (!(mh = flux_msg_handler_create (ctx->h, match, cb, ctx->p))) {
+    if (!(mh = flux_msg_handler_create (ctx->h, match, cb, ctx))) {
         log_err ("flux_msg_handler_create");
         goto cleanup;
     }
