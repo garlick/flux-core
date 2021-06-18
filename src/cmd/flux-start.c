@@ -33,6 +33,7 @@
 #include "src/common/libutil/oom.h"
 #include "src/common/libutil/cleanup.h"
 #include "src/common/libutil/setenvf.h"
+#include "src/common/libutil/dirwalk.h"
 #include "src/common/libutil/errno_safe.h"
 #include "src/common/libpmi/simple_server.h"
 #include "src/common/libpmi/clique.h"
@@ -82,6 +83,7 @@ int exec_broker (const char *cmd_argz, size_t cmd_argz_len,
 char *create_rundir (void);
 void client_destroy (struct client *cli);
 char *find_broker (const char *searchpath);
+static int list_instances (void);
 static void setup_profiling_env (void);
 static void client_wait_respond (struct client *cli);
 static void client_run_respond (struct client *cli, int errnum);
@@ -133,6 +135,8 @@ static struct optparse_option opts[] = {
     { .group = 2,
       .name = "test-pmi-clique", .has_arg = 1, .arginfo = "single|none",
       .usage = "Set PMI_process_mapping mode (default=single)", },
+    { .name = "list", .has_arg = 0,
+      .usage = "list other local Flux instances running as same user" },
     { .flags = OPTPARSE_OPT_HIDDEN,
       .name = "killer-timeout", .has_arg = 1, .arginfo = "FSD",
       .usage = "(deprecated)" },
@@ -224,11 +228,19 @@ int main (int argc, char *argv[])
             log_msg_exit ("--test-exit-mode only works with --test-size=N");
         if (optparse_hasopt (ctx.opts, "test-start-mode"))
             log_msg_exit ("--test-start-mode only works with --test-size=N");
-        if (exec_broker (command, len, broker_path) < 0)
-            log_err_exit ("error execing broker");
+    }
+
+
+    if (optparse_hasopt (ctx.opts, "list")) {
+        status = list_instances ();
+    }
+    else if (optparse_hasopt (ctx.opts, "test-size")) {
+        status = start_session (command, len, broker_path);
     }
     else {
-        status = start_session (command, len, broker_path);
+        if (exec_broker (command, len, broker_path) < 0)
+            log_err_exit ("error execing broker");
+        /*NOTREACHED*/
     }
 
     optparse_destroy (ctx.opts);
@@ -429,8 +441,20 @@ void add_args_list (char **argz, size_t *argz_len, optparse_t *opt, const char *
 char *create_rundir (void)
 {
     char *tmpdir = getenv ("TMPDIR");
-    char *rundir = xasprintf ("%s/flux-XXXXXX", tmpdir ? tmpdir : "/tmp");
+    char userdir[1024];
 
+    /* First user creates flux-userNNN.
+     * Nobody cleans it up.
+     */
+    if (snprintf (userdir, sizeof (userdir), "%s/flux-userid-%u",
+                  tmpdir ? tmpdir : "/tmp", getuid ()) >= sizeof (userdir))
+        log_err_exit ("buffer overflow");
+    if (mkdir (userdir, 0700) < 0) {
+        if (errno != EEXIST)
+            log_err_exit ("mkdir %s", userdir);
+    }
+
+    char *rundir = xasprintf ("%s/flux-XXXXXX", userdir);
     if (!mkdtemp (rundir))
         log_err_exit ("mkdtemp %s", rundir);
     cleanup_push_string (cleanup_directory_recursive, rundir);
@@ -1015,6 +1039,37 @@ int start_session (const char *cmd_argz, size_t cmd_argz_len,
     flux_reactor_destroy (ctx.reactor);
 
     return (ctx.exit_rc);
+}
+
+static int list_cb (dirwalk_t *d, void *arg)
+{
+    char uri[1024];
+    flux_t *h;
+    uint32_t size;
+
+    if (!strcmp (dirwalk_name (d), "local-0")) {
+        snprintf (uri, sizeof (uri), "local://%s", dirwalk_path (d));
+        if ((h = flux_open (uri, 0))) {
+            if (flux_get_size (h, &size) == 0)
+                printf ("s=%u %s\n", (unsigned int)size, uri);
+            flux_close (h);
+        }
+    }
+    return 0;
+}
+
+static int list_instances (void)
+{
+    const char *tmpdir = getenv ("TMPDIR");
+    char userdir[1024];
+
+    if (snprintf (userdir, sizeof (userdir), "%s/flux-userid-%u",
+                  tmpdir ? tmpdir : "/tmp", getuid ()) >= sizeof (userdir))
+        log_msg_exit ("buffer overflow");
+
+    (void)dirwalk (userdir, DIRWALK_REALPATH, list_cb, NULL);
+
+    return 0;
 }
 
 /*
