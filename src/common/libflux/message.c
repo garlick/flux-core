@@ -461,10 +461,12 @@ static int iovec_to_msg (flux_msg_t *msg,
     msg->flags = proto_data[PROTO_OFF_FLAGS];
 
     if ((msg->flags & FLUX_MSGFLAG_ROUTE)) {
-        if (index == iovcnt) {
-            errno = EPROTO;
-            return -1;
-        }
+        /* On first access index == 0 && iovcnt > 0 guaranteed
+         * Re-add check if code changes. */
+        /* if (index == iovcnt) { */
+        /*     errno = EPROTO; */
+        /*     return -1; */
+        /* } */
         while ((index < iovcnt) && iov[index].size > 0) {
             if (msg_append_route (msg,
                                   (char *)iov[index].data,
