@@ -174,6 +174,7 @@ TESTS = test_message.t \
 test_ldadd = \
 	$(top_builddir)/src/common/libtestutil/libtestutil.la \
 	$(top_builddir)/src/common/libflux/libflux.la \
+	$(top_builddir)/src/common/libzmqutil/libzmqutil.la \
 	$(top_builddir)/src/common/libutil/libutil.la \
 	$(top_builddir)/src/common/libidset/libidset.la \
 	$(top_builddir)/src/common/libtap/libtap.la \
