@@ -521,6 +521,7 @@ flux_msg_t *flux_msg_decode (const void *buf, size_t size)
     flux_msg_t *msg;
     const uint8_t *p = buf;
     struct msg_iovec *iov = NULL;
+    int iovlen = 0;
     int iovcnt = 0;
 
     if (!(msg = flux_msg_create_common ()))
@@ -539,9 +540,13 @@ flux_msg_t *flux_msg_decode (const void *buf, size_t size)
             errno = EINVAL;
             goto error;
         }
-
-        if (!(iov = realloc (iov, (iovcnt + 1) * sizeof (struct msg_iovec))))
-            goto nomem;
+        if (iovlen <= iovcnt) {
+            struct msg_iovec *tmp;
+            iovlen += 3;
+            if (!(tmp = realloc (iov, sizeof (*iov) * iovlen)))
+                goto error;
+            iov = tmp;
+        }
         iov[iovcnt].data = p;
         iov[iovcnt].size = n;
         iovcnt++;
@@ -551,8 +556,6 @@ flux_msg_t *flux_msg_decode (const void *buf, size_t size)
         goto error;
     free (iov);
     return msg;
-nomem:
-    errno = ENOMEM;
 error:
     free (iov);
     flux_msg_destroy (msg);
@@ -1763,6 +1766,7 @@ flux_msg_t *flux_msg_recvzsock (void *sock)
 {
     void *handle;
     struct msg_iovec *iov = NULL;
+    int iovlen = 0;
     int iovcnt = 0;
     flux_msg_t *msg;
     flux_msg_t *rv = NULL;
@@ -1779,10 +1783,13 @@ flux_msg_t *flux_msg_recvzsock (void *sock)
      */
     handle = zsock_resolve (sock);
     while (true) {
-        struct msg_iovec *tmp;
-        if (!(tmp = realloc (iov, (iovcnt + 1) * sizeof (struct msg_iovec))))
-            goto error;
-        iov = tmp;
+        if (iovlen <= iovcnt) {
+            struct msg_iovec *tmp;
+            iovlen += 3;
+            if (!(tmp = realloc (iov, sizeof (*iov) * iovlen)))
+                goto error;
+            iov = tmp;
+        }
         if (!(iov[iovcnt].aux = malloc (sizeof (zmq_msg_t))))
             goto error;
         zmq_msg_init ((zmq_msg_t *)iov[iovcnt].aux);
