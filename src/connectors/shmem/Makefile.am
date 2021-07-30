@@ -20,9 +20,8 @@ shmem_la_LDFLAGS = -module $(san_ld_zdef_flag) \
 	--disable-static -avoid-version -shared -export-dynamic
 
 shmem_la_LIBADD = \
-	$(top_builddir)/src/common/libflux-internal.la \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(top_builddir)/src/common/libzmqutil/libzmqutil.la \
-	$(top_builddir)/src/common/libflux/libmessage.la \
+	$(top_builddir)/src/common/libflux-internal.la \
 	$(ZMQ_LIBS)
 

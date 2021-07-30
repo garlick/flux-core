@@ -98,13 +98,6 @@ libflux_la_SOURCES = \
 	reactor_private.h \
 	msg_handler.c \
 	message.c \
-	message_private.h \
-	message_iovec.h \
-	message_iovec.c \
-	message_route.h \
-	message_route.c \
-	message_proto.h \
-	message_proto.c \
 	msglist.c \
 	request.c \
 	response.c \
@@ -186,6 +179,7 @@ test_ldadd = \
 	$(top_builddir)/src/common/libtestutil/libtestutil.la \
 	$(top_builddir)/src/common/libflux/libflux.la \
 	$(top_builddir)/src/common/libzmqutil/libzmqutil.la \
+	$(top_builddir)/src/common/libflux/libmessage.la \
 	$(top_builddir)/src/common/libutil/libutil.la \
 	$(top_builddir)/src/common/libidset/libidset.la \
 	$(top_builddir)/src/common/libtap/libtap.la \
