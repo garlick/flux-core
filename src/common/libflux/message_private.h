@@ -14,7 +14,6 @@
 #include <stdint.h>
 #include <jansson.h>
 
-#include "src/common/libutil/errno_safe.h"
 /* czmq and ccan both define streq */
 #ifdef streq
 #undef streq

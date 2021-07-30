@@ -38,6 +38,7 @@
 #include <jansson.h>
 
 #include "src/common/libutil/aux.h"
+#include "src/common/libutil/errno_safe.h"
 
 #include "message_private.h"
 #include "message_iovec.h"
