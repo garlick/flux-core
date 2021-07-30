@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <czmq.h>
+#include <flux/core.h>
 
 #include "src/common/libflux/message_private.h"
 #include "src/common/libflux/message_iovec.h"

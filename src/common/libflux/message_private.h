@@ -20,8 +20,6 @@
 #endif
 #include "src/common/libccan/ccan/list/list.h"
 
-#include "message.h"
-
 #define IOVECINCR           4
 
 struct flux_msg {

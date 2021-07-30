@@ -40,12 +40,12 @@
 #include "src/common/libutil/aux.h"
 #include "src/common/libutil/errno_safe.h"
 
+#include "message.h"
+
 #include "message_private.h"
 #include "message_iovec.h"
 #include "message_route.h"
 #include "message_proto.h"
-
-#include "message.h"
 
 static void msg_setup_type (flux_msg_t *msg)
 {
