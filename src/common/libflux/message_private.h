@@ -99,16 +99,6 @@ struct route_id {
     char id[0];                 /* variable length id stored at end of struct */
 };
 
-/* 'transport_data' is for any auxiliary transport data user may wish
- * to associate with iovec, user is responsible to free/destroy the
- * field
- */
-struct msg_iovec {
-    const void *data;
-    size_t size;
-    void *transport_data;
-};
-
 void msg_proto_setup (const flux_msg_t *msg, uint8_t *data, int len);
 
 int msg_route_push (flux_msg_t *msg,
@@ -123,15 +113,7 @@ void msg_route_clear (flux_msg_t *msg);
 
 int msg_route_delete_last (flux_msg_t *msg);
 
-int iovec_to_msg (flux_msg_t *msg,
-                  struct msg_iovec *iov,
-                  int iovcnt);
-
-int msg_to_iovec (const flux_msg_t *msg,
-                  uint8_t *proto,
-                  int proto_len,
-                  struct msg_iovec **iovp,
-                  int *iovcntp);
+void proto_get_u32 (const uint8_t *data, int index, uint32_t *val);
 
 #endif /* !_FLUX_CORE_MESSAGE_PRIVATE_H */
 

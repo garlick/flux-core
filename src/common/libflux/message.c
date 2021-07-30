@@ -41,6 +41,7 @@
 
 #include "message.h"
 #include "message_private.h"
+#include "message_iovec.h"
 
 static void msg_setup_type (flux_msg_t *msg)
 {

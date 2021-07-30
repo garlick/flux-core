@@ -19,6 +19,7 @@
 #include <czmq.h>
 
 #include "src/common/libflux/message_private.h"
+#include "src/common/libflux/message_iovec.h"
 #include "src/common/libutil/errno_safe.h"
 
 #include "msg_zsock.h"
