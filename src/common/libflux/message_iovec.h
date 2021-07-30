@@ -11,6 +11,8 @@
 #ifndef _FLUX_CORE_MESSAGE_IOVEC_H
 #define _FLUX_CORE_MESSAGE_IOVEC_H
 
+#define IOVECINCR           4
+
 /* 'transport_data' is for any auxiliary transport data user may wish
  * to associate with iovec, user is responsible to free/destroy the
  * field

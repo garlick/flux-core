@@ -20,8 +20,6 @@
 #endif
 #include "src/common/libccan/ccan/list/list.h"
 
-#define IOVECINCR           4
-
 struct flux_msg {
     // optional route list, if FLUX_MSGFLAG_ROUTE
     struct list_head routes;
