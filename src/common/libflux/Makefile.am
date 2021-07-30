@@ -102,6 +102,8 @@ libflux_la_SOURCES = \
 	message_private.c \
 	message_iovec.h \
 	message_iovec.c \
+	message_route.h \
+	message_route.c \
 	msglist.c \
 	request.c \
 	response.c \
@@ -142,7 +144,9 @@ libmessageprivate_la_SOURCES = \
 	message_private.h \
 	message_private.c \
 	message_iovec.h \
-	message_iovec.c
+	message_iovec.c \
+	message_route.h \
+	message_route.c
 
 libmessageprivate_la_CPPFLAGS = $(AM_CPPFLAGS)
 libmessageprivate_la_LDFLAGS = -avoid-version -module -shared -export-dynamic

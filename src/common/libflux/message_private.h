@@ -94,24 +94,7 @@ struct flux_msg {
     int refcount;
 };
 
-struct route_id {
-    struct list_node route_id_node;
-    char id[0];                 /* variable length id stored at end of struct */
-};
-
 void msg_proto_setup (const flux_msg_t *msg, uint8_t *data, int len);
-
-int msg_route_push (flux_msg_t *msg,
-                    const char *id,
-                    unsigned int id_len);
-
-int msg_route_append (flux_msg_t *msg,
-                      const char *id,
-                      unsigned int id_len);
-
-void msg_route_clear (flux_msg_t *msg);
-
-int msg_route_delete_last (flux_msg_t *msg);
 
 void proto_get_u32 (const uint8_t *data, int index, uint32_t *val);
 
