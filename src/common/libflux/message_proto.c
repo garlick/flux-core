@@ -20,6 +20,7 @@
 
 #include "message.h"
 #include "message_private.h"
+#include "message_proto.h"
 
 static void proto_set_u32 (uint8_t *data, int index, uint32_t val)
 {

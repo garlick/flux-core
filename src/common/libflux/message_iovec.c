@@ -21,6 +21,7 @@
 #include "message.h"
 #include "message_private.h"
 #include "message_route.h"
+#include "message_proto.h"
 #include "message_iovec.h"
 
 int iovec_to_msg (flux_msg_t *msg,
