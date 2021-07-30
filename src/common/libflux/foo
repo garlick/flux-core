@@ -1,0 +1,4 @@
+#!/bin/sh
+
+
+echo ${RC1_PATH:+-o -Sbroker.rc1_path=${RC1_PATH}}

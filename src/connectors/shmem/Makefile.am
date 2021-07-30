@@ -23,6 +23,6 @@ shmem_la_LIBADD = \
 	$(top_builddir)/src/common/libflux-internal.la \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(top_builddir)/src/common/libzmqutil/libzmqutil.la \
-	$(top_builddir)/src/common/libflux/libmessageprivate.la \
+	$(top_builddir)/src/common/libflux/libmessage.la \
 	$(ZMQ_LIBS)
 

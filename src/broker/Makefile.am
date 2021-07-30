@@ -67,7 +67,7 @@ flux_broker_LDADD = \
 	$(builddir)/libbroker.la \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(top_builddir)/src/common/libzmqutil/libzmqutil.la \
-	$(top_builddir)/src/common/libflux/libmessageprivate.la \
+	$(top_builddir)/src/common/libflux/libmessage.la \
 	$(top_builddir)/src/common/libpmi/libpmi_client.la \
 	$(top_builddir)/src/common/libflux-internal.la \
 	$(top_builddir)/src/common/libflux-optparse.la \
@@ -92,7 +92,7 @@ test_ldadd = \
 	$(top_builddir)/src/common/libtestutil/libtestutil.la \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(top_builddir)/src/common/libzmqutil/libzmqutil.la \
-	$(top_builddir)/src/common/libflux/libmessageprivate.la \
+	$(top_builddir)/src/common/libflux/libmessage.la \
 	$(top_builddir)/src/common/libpmi/libpmi_client.la \
 	$(top_builddir)/src/common/libflux-internal.la \
 	$(top_builddir)/src/common/libtap/libtap.la \

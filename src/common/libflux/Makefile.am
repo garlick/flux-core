@@ -88,7 +88,7 @@ nodist_fluxcoreinclude_HEADERS = \
 
 noinst_LTLIBRARIES = \
 	libflux.la \
-	libmessageprivate.la
+	libmessage.la
 
 libflux_la_SOURCES = \
 	flog.c \
@@ -141,7 +141,7 @@ libflux_la_CPPFLAGS = \
 	$(AM_CPPFLAGS)
 libflux_la_LDFLAGS = -avoid-version -module -shared -export-dynamic
 
-libmessageprivate_la_SOURCES = \
+libmessage_la_SOURCES = \
 	message_private.h \
 	message_iovec.h \
 	message_iovec.c \
@@ -151,8 +151,8 @@ libmessageprivate_la_SOURCES = \
 	message_proto.c
 
 
-libmessageprivate_la_CPPFLAGS = $(AM_CPPFLAGS)
-libmessageprivate_la_LDFLAGS = -avoid-version -module -shared -export-dynamic
+libmessage_la_CPPFLAGS = $(AM_CPPFLAGS)
+libmessage_la_LDFLAGS = -avoid-version -module -shared -export-dynamic
 
 TESTS = test_message.t \
 	test_msglist.t \
