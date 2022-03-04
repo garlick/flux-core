@@ -15,50 +15,63 @@
 
 #include "job.h"
 
-const char *flux_job_statetostr (flux_job_state_t state, bool single_char)
+struct state {
+    flux_job_state_t state;
+    const char *long_upper;
+    const char *long_lower;
+    const char *short_upper;
+    const char *short_lower;
+};
+
+static struct state states[] = {
+    { FLUX_JOB_STATE_NEW,       "NEW",      "new",      "N", "n" },
+    { FLUX_JOB_STATE_DEPEND,    "DEPEND",   "depend",   "D", "d" },
+    { FLUX_JOB_STATE_PRIORITY,  "PRIORITY", "priority", "P", "p" },
+    { FLUX_JOB_STATE_SCHED,     "SCHED",    "sched",    "S", "s" },
+    { FLUX_JOB_STATE_RUN,       "RUN",      "run",      "R", "r" },
+    { FLUX_JOB_STATE_CLEANUP,   "CLEANUP",  "cleanup",  "C", "c" },
+    { FLUX_JOB_STATE_INACTIVE,  "INACTIVE", "inactive", "I", "i" },
+};
+static const size_t states_count = sizeof (states) / sizeof (states[0]);
+
+static const char *format_state (struct state *state, const char *fmt)
 {
-    switch (state) {
-        case FLUX_JOB_STATE_NEW:
-            return single_char ? "N" : "NEW";
-        case FLUX_JOB_STATE_DEPEND:
-            return single_char ? "D" : "DEPEND";
-        case FLUX_JOB_STATE_PRIORITY:
-            return single_char ? "P" : "PRIORITY";
-        case FLUX_JOB_STATE_SCHED:
-            return single_char ? "S" : "SCHED";
-        case FLUX_JOB_STATE_RUN:
-            return single_char ? "R" : "RUN";
-        case FLUX_JOB_STATE_CLEANUP:
-            return single_char ? "C" : "CLEANUP";
-        case FLUX_JOB_STATE_INACTIVE:
-            return single_char ? "I" : "INACTIVE";
+    switch (*fmt) {
+        case 'c':
+            return state->short_lower;
+        case 'C':
+            return state->short_upper;
+        case 's':
+            return state->long_lower;
+        case 'S':
+        default:
+            return state->long_upper;
     }
-    return single_char ? "?" : "(unknown)";
+}
+
+const char *flux_job_statetostr (flux_job_state_t state, const char *fmt)
+{
+    struct state unknown = { 0, "(unknown)", "(unknown)", "?", "?" };
+
+    for (int i = 0; i < states_count; i++)
+        if (states[i].state == state)
+            return format_state (&states[i], fmt);
+    return format_state (&unknown, fmt);
 }
 
 int flux_job_strtostate (const char *s, flux_job_state_t *state)
 {
-    if (!s || !state)
-        goto inval;
-    if (!strcasecmp (s, "N") || !strcasecmp (s, "NEW"))
-        *state = FLUX_JOB_STATE_NEW;
-    else if (!strcasecmp (s, "D") || !strcasecmp (s, "DEPEND"))
-        *state = FLUX_JOB_STATE_DEPEND;
-    else if (!strcasecmp (s, "P") || !strcasecmp (s, "PRIORITY"))
-        *state = FLUX_JOB_STATE_PRIORITY;
-    else if (!strcasecmp (s, "S") || !strcasecmp (s, "SCHED"))
-        *state = FLUX_JOB_STATE_SCHED;
-    else if (!strcasecmp (s, "R") || !strcasecmp (s, "RUN"))
-        *state = FLUX_JOB_STATE_RUN;
-    else if (!strcasecmp (s, "C") || !strcasecmp (s, "CLEANUP"))
-        *state = FLUX_JOB_STATE_CLEANUP;
-    else if (!strcasecmp (s, "I") || !strcasecmp (s, "INACTIVE"))
-        *state = FLUX_JOB_STATE_INACTIVE;
-    else
-        goto inval;
-
-    return 0;
-inval:
+    if (s && state) {
+        for (int i = 0; i < states_count; i++) {
+            if (!strcmp (states[i].short_lower, s)
+                || !strcmp (states[i].short_upper, s)
+                || !strcmp (states[i].long_lower, s)
+                || !strcmp (states[i].long_upper, s)) {
+                *state = states[i].state;
+                return 0;
+            }
+        }
+    }
     errno = EINVAL;
     return -1;
 }

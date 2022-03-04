@@ -40,7 +40,7 @@ static const char *state_index_name (int index)
 
     memset (name, 0, sizeof (name));
     strncpy (name,
-            flux_job_statetostr ((1<<index), false),
+            flux_job_statetostr ((1<<index), "S"),
             sizeof (name) - 1);
 
     for (p = name; *p != '\0'; ++p)

@@ -246,12 +246,12 @@ void check_statestr(void)
     struct ss *ss;
 
     for (ss = &sstab[0]; ss->s != NULL; ss++) {
-        const char *s = flux_job_statetostr (ss->state, true);
-        const char *s_long = flux_job_statetostr (ss->state, false);
+        const char *s = flux_job_statetostr (ss->state, "C");
+        const char *s_long = flux_job_statetostr (ss->state, "S");
         ok (s && !strcmp (s, ss->s),
-            "flux_job_statetostr (%d, true) = %s", ss->state, ss->s);
+            "flux_job_statetostr (%d, C) = %s", ss->state, ss->s);
         ok (s_long && !strcmp (s_long, ss->s_long),
-            "flux_job_statetostr (%d, false) = %s", ss->state, ss->s_long);
+            "flux_job_statetostr (%d, S) = %s", ss->state, ss->s_long);
     }
     for (ss = &sstab[0]; ss->s != NULL; ss++) {
         flux_job_state_t state;
@@ -260,10 +260,10 @@ void check_statestr(void)
         ok (flux_job_strtostate (ss->s_long, &state) == 0 && state == ss->state,
             "flux_job_strtostate (%s) = %d", ss->s_long, ss->state);
     }
-    ok (flux_job_statetostr (0, true) != NULL,
-        "flux_job_statetostr (0, true) returned non-NULL");
-    ok (flux_job_statetostr (0, false) != NULL,
-        "flux_job_statetostr (0, false) returned non-NULL");
+    ok (flux_job_statetostr (0, "C") != NULL,
+        "flux_job_statetostr (0, C) returned non-NULL");
+    ok (flux_job_statetostr (0, "S") != NULL,
+        "flux_job_statetostr (0, S) returned non-NULL");
 }
 
 struct rr {

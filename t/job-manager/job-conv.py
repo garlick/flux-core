@@ -15,11 +15,14 @@ from flux.core.inner import ffi, raw
 
 
 def statetostr(args):
+    fmt = "S"
+    if args.single:
+        fmt = "C"
     if not args.states:
         args.states = [line.strip() for line in sys.stdin]
 
     for state in args.states:
-        print(raw.flux_job_statetostr(int(state), args.single).decode("utf-8"))
+        print(raw.flux_job_statetostr(int(state), fmt).decode("utf-8"))
 
 
 def strtostate(args):
