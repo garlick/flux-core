@@ -857,8 +857,20 @@ static void broker_online_cb (flux_future_t *f, void *arg)
                 flux_log (s->ctx->h, LOG_ERR, "quorum reached");
                 s->quorum.warned = false;
             }
+            quorum_reached = true;
         }
     }
+
+    if (optparse_hasopt (s->ctx->opts, "progress")
+        && s->state == STATE_QUORUM) {
+        fprintf (stderr,
+                 "flux-broker: "
+                 "waiting for remaining brokers to join: %zu of %zu%s",
+                 idset_count (s->quorum.online),
+                 idset_count (s->quorum.all),
+                 quorum_reached ? "\n" : "\r");
+    }
+
     flux_future_reset (f);
 }
 

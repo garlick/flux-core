@@ -142,6 +142,8 @@ static struct optparse_option opts[] = {
       .usage = "Set broker attribute", },
     { .name = "config-path",.key = 'c', .has_arg = 1, .arginfo = "PATH",
       .usage = "Set broker config from PATH (default: none)", },
+    { .name = "progress",   .has_arg = 0,
+      .usage = "Show wireup progress", },
     OPTPARSE_TABLE_END,
 };
 
