@@ -538,6 +538,7 @@ AC_CONFIG_FILES( \
   src/common/libsdprocess/Makefile \
   src/common/liboptparse/Makefile \
   src/common/libidset/Makefile \
+  src/common/libroaring/Makefile \
   src/common/libtomlc99/Makefile \
   src/common/libschedutil/Makefile \
   src/common/libeventlog/Makefile \
