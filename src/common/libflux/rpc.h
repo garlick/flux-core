@@ -70,6 +70,11 @@ uint32_t flux_rpc_get_matchtag (flux_future_t *f);
 uint32_t flux_rpc_get_nodeid (flux_future_t *f);
 const char *flux_rpc_get_topic (flux_future_t *f);
 
+/* Cancel an RPC.  The service must have implemented the cancel-rpc
+ * method as described in RFC 6 or this function has no effect.
+ */
+int flux_rpc_cancel (flux_future_t *f);
+
 #ifdef __cplusplus
 }
 #endif

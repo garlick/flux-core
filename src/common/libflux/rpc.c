@@ -447,6 +447,40 @@ const char *flux_rpc_get_topic (flux_future_t *f)
     return rpc ? rpc->topic : NULL;
 }
 
+int flux_rpc_cancel (flux_future_t *f)
+{
+    struct flux_rpc *rpc;
+    flux_t *h;
+    char *topic = NULL;
+    flux_future_t *f_cancel;
+    char *cp;
+
+    if (!f
+        || !(h = flux_future_get_flux (f))
+        || !(rpc = flux_future_aux_get (f, "flux::rpc"))) {
+        errno = EINVAL;
+        return -1;
+    }
+    if ((cp = strrchr (rpc->topic, '.'))) {
+        int service_len = cp - rpc->topic;
+        if (asprintf (&topic, "%.*s.rpc-cancel", service_len, rpc->topic) < 0)
+            return -1;
+    }
+    if (!(f_cancel = flux_rpc_pack (h,
+                                    topic ? topic : "rpc-cancel",
+                                    rpc->nodeid,
+                                    FLUX_RPC_NORESPONSE,
+                                    "{s:i}",
+                                    "matchtag", rpc->matchtag)))
+        goto error;
+    flux_future_destroy (f_cancel);
+    free (topic);
+    return 0;
+error:
+    ERRNO_SAFE_WRAP (free, topic);
+    return -1;
+}
+
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
  */
