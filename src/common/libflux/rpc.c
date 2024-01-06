@@ -36,6 +36,7 @@
 struct flux_rpc {
     uint32_t matchtag;
     uint32_t nodeid;
+    char *topic;
     int flags;
     flux_future_t *f;
     bool sent;
@@ -89,6 +90,7 @@ static void rpc_destroy (struct flux_rpc *rpc)
                                     ? "unterminated streaming RPC"
                                     : "unfulfilled RPC",
                                rpc->matchtag);
+        free (rpc->topic);
         free (rpc);
         errno = saved_errno;
     }
@@ -97,19 +99,20 @@ static void rpc_destroy (struct flux_rpc *rpc)
 static struct flux_rpc *rpc_create (flux_t *h,
                                     flux_future_t *f,
                                     uint32_t nodeid,
+                                    const char *topic,
                                     int flags)
 {
     struct flux_rpc *rpc;
 
     if (!(rpc = calloc (1, sizeof (*rpc))))
         return NULL;
+    if (!(rpc->topic = strdup (topic)))
+        goto error;
     rpc->f = f;
     rpc->nodeid = nodeid;
     rpc->flags = flags;
-    if ((flags & FLUX_RPC_NORESPONSE)) {
-        rpc->matchtag = FLUX_MATCHTAG_NONE;
-    }
-    else {
+    rpc->matchtag = FLUX_MATCHTAG_NONE;
+    if (!(flags & FLUX_RPC_NORESPONSE)) {
         rpc->matchtag = flux_matchtag_alloc (h);
         if (rpc->matchtag == FLUX_MATCHTAG_NONE)
             goto error;
@@ -117,6 +120,7 @@ static struct flux_rpc *rpc_create (flux_t *h,
     flux_future_set_flux (f, h);
     return rpc;
 error:
+    ERRNO_SAFE_WRAP (free, rpc->topic);
     ERRNO_SAFE_WRAP (free, rpc);
     return NULL;
 }
@@ -246,6 +250,7 @@ error:
 static flux_future_t *flux_rpc_message_send_new (flux_t *h,
                                                  flux_msg_t **msg,
                                                  uint32_t nodeid,
+                                                 const char *topic,
                                                  int flags)
 {
     struct flux_rpc *rpc = NULL;
@@ -253,7 +258,7 @@ static flux_future_t *flux_rpc_message_send_new (flux_t *h,
 
     if (!(f = flux_future_create (initialize_cb, NULL)))
         goto error;
-    if (!(rpc = rpc_create (h, f, nodeid, flags)))
+    if (!(rpc = rpc_create (h, f, nodeid, topic, flags)))
         goto error;
     if (flux_future_aux_set (f, "flux::rpc", rpc,
                              (flux_free_f)rpc_destroy) < 0) {
@@ -319,16 +324,20 @@ flux_future_t *flux_rpc_message (flux_t *h,
 {
     flux_msg_t *cpy;
     flux_future_t *f;
+    int type;
+    const char *topic;
 
     if (!h
         || !msg
-        || validate_flags (flags,
-                           FLUX_RPC_NORESPONSE | FLUX_RPC_STREAMING) < 0) {
+        || validate_flags (flags, FLUX_RPC_NORESPONSE | FLUX_RPC_STREAMING) < 0
+        || flux_msg_get_type (msg, &type) < 0
+        || type != FLUX_MSGTYPE_REQUEST) {
         errno = EINVAL;
         return NULL;
     }
     if (!(cpy = flux_msg_copy (msg, true))
-        || !(f = flux_rpc_message_send_new (h, &cpy, nodeid, flags))) {
+        || flux_msg_get_topic (msg, &topic) < 0
+        || !(f = flux_rpc_message_send_new (h, &cpy, nodeid, topic, flags))) {
         flux_msg_destroy (cpy);
         return NULL;
     }
@@ -350,7 +359,7 @@ flux_future_t *flux_rpc (flux_t *h,
         return NULL;
     }
     if (!(msg = flux_request_encode (topic, s))
-        || !(f = flux_rpc_message_send_new (h, &msg, nodeid, flags))) {
+        || !(f = flux_rpc_message_send_new (h, &msg, nodeid, topic, flags))) {
         flux_msg_destroy (msg);
         return NULL;
     }
@@ -373,7 +382,7 @@ flux_future_t *flux_rpc_raw (flux_t *h,
         return NULL;
     }
     if (!(msg = flux_request_encode_raw (topic, data, len))
-        || !(f = flux_rpc_message_send_new (h, &msg, nodeid, flags))) {
+        || !(f = flux_rpc_message_send_new (h, &msg, nodeid, topic, flags))) {
         flux_msg_destroy (msg);
         return NULL;
     }
@@ -397,7 +406,7 @@ flux_future_t *flux_rpc_vpack (flux_t *h,
     }
     if (!(msg = flux_request_encode (topic, NULL))
         || flux_msg_vpack (msg, fmt, ap) < 0
-        || !(f = flux_rpc_message_send_new (h, &msg, nodeid, flags))) {
+        || !(f = flux_rpc_message_send_new (h, &msg, nodeid, topic, flags))) {
         flux_msg_destroy (msg);
         return NULL;
     }
@@ -430,6 +439,12 @@ uint32_t flux_rpc_get_nodeid (flux_future_t *f)
 {
     struct flux_rpc *rpc = flux_future_aux_get (f, "flux::rpc");
     return rpc ? rpc->nodeid : FLUX_NODEID_ANY;
+}
+
+const char *flux_rpc_get_topic (flux_future_t *f)
+{
+    struct flux_rpc *rpc = flux_future_aux_get (f, "flux::rpc");
+    return rpc ? rpc->topic : NULL;
 }
 
 /*
