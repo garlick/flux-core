@@ -335,9 +335,7 @@ int event_job_action (struct event *event, struct job *job)
                 && !job->alloc_bypass
                 && !job->start_pending
                 && !job->free_posted) {
-                if (housekeeping_start (ctx->housekeeping,
-                                        job->R_redacted,
-                                        job->id) < 0)
+                if (housekeeping_start (ctx->housekeeping, job) < 0)
                     return -1;
                 if (event_job_post_pack (ctx->event, job, "free", 0, NULL) < 0)
                     return -1;

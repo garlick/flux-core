@@ -362,9 +362,7 @@ static int housekeeping_start_one (struct housekeeping *hk, int rank)
     return 0;
 }
 
-int housekeeping_start (struct housekeeping *hk,
-                        json_t *R,
-                        flux_jobid_t id)
+int housekeeping_start (struct housekeeping *hk, struct job *job)
 {
     flux_t *h = hk->ctx->h;
     struct allocation *a;
@@ -378,12 +376,12 @@ int housekeeping_start (struct housekeeping *hk,
 
     /* Create the 'allocation' and put it in our list.
      */
-    if (!(a = allocation_create (hk, R, id))
+    if (!(a = allocation_create (hk, job->R_redacted, job->id))
         || !(list_handle = zlistx_insert (hk->allocations, a, false))) {
         flux_log (h,
                   LOG_ERR,
                   "housekeeping: %s error saving alloc object (skipping)",
-                  idf58 (id));
+                  idf58 (job->id));
         allocation_destroy (a);
         goto skip;
     }
@@ -407,7 +405,7 @@ int housekeeping_start (struct housekeeping *hk,
     }
     return 0;
 skip:
-    return alloc_send_free_request (hk->ctx->alloc, R, id);
+    return alloc_send_free_request (hk->ctx->alloc, job->R_redacted, job->id);
 }
 
 /* We need a revision to RFC 27 to support partial allocations in the

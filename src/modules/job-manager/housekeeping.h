@@ -13,6 +13,7 @@
 
 #include <flux/core.h>
 #include "job-manager.h"
+#include "job.h"
 
 struct housekeeping *housekeeping_ctx_create (struct job_manager *ctx);
 void housekeeping_ctx_destroy (struct housekeeping *hk);
@@ -21,7 +22,7 @@ void housekeeping_ctx_destroy (struct housekeeping *hk);
  * may treat R as freed, but R will remain allocated from the scheduler's
  * perspective until the housekeeping script is run on each execution target.
  */
-int housekeeping_start (struct housekeeping *hk, json_t *R, flux_jobid_t id);
+int housekeeping_start (struct housekeeping *hk, struct job *job);
 
 /* Call this to add responses to the scheduler's hello request at startup.
  * It should inform the scheduler about resources that are still allocated,
