@@ -79,6 +79,7 @@
 #include "alloc.h"
 #include "job-manager.h"
 #include "conf.h"
+#include "sysjob.h"
 
 #include "housekeeping.h"
 
@@ -362,6 +363,46 @@ static int housekeeping_start_one (struct housekeeping *hk, int rank)
     return 0;
 }
 
+static void sysjob_continuation (flux_future_t *f, void *arg)
+{
+    struct housekeeping *hk = arg;
+    struct job *job;
+
+    if (sysjob_create_get (f, &job) < 0) {
+        flux_log (hk->ctx->h, LOG_ERR, "%s", future_strerror (f, errno));
+        goto done;
+    }
+    if (sysjob_create_finish (hk->ctx->sysjob, job) < 0) {
+        flux_log_error (hk->ctx->h, "unable to finish sysjob");
+        goto done;
+    }
+    flux_log (hk->ctx->h, LOG_ERR, "sysjob created");
+done:
+    flux_future_destroy (f);
+}
+
+static void hack (struct housekeeping *hk, struct job *job)
+{
+    flux_future_t *f;
+    flux_error_t error;
+    char name[64];
+    snprintf (name, sizeof (name), "(%s)", idf58 (job->id));
+    if (!(f = sysjob_create (hk->ctx->sysjob,
+                             name,
+                             hk->cmd,
+                             job->R_redacted,
+                             &error))) {
+        flux_log (hk->ctx->h, LOG_ERR, "%s", error.text);
+        return;
+    }
+    if (flux_future_then (f, -1, sysjob_continuation, hk) < 0) {
+        flux_log_error (hk->ctx->h, "sysjob: error setting up continuation");
+        flux_future_destroy (f);
+        return;
+    }
+    flux_log (hk->ctx->h, LOG_ERR, "creating sysjob");
+}
+
 int housekeeping_start (struct housekeeping *hk, struct job *job)
 {
     flux_t *h = hk->ctx->h;
@@ -369,10 +410,14 @@ int housekeeping_start (struct housekeeping *hk, struct job *job)
     unsigned int rank;
     void *list_handle;
 
-    /* Housekeeping is not configured
+    /* Housekeeping is not configured or job is a system job
      */
     if (!hk->cmd)
         goto skip;
+    if ((job->flags & FLUX_JOB_SYSTEM))
+        return 0;
+
+    hack (hk, job); // XXX
 
     /* Create the 'allocation' and put it in our list.
      */
