@@ -24,6 +24,7 @@ enum job_submit_flags {
     FLUX_JOB_DEBUG = 2,
     FLUX_JOB_WAITABLE = 4,      // flux_job_wait() will be used on this job
     FLUX_JOB_NOVALIDATE = 8,    // don't validate jobspec (instance owner only)
+    FLUX_JOB_SYSTEM = 16,       // special system job
 };
 
 enum job_event_watch_flags {
