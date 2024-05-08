@@ -849,6 +849,8 @@ static int jobtap_call_early (struct jobtap *jobtap,
     flux_plugin_arg_t *args;
     const char *errmsg = NULL;
 
+    if ((job->flags & FLUX_JOB_SYSTEM))
+        return 0;
     if (jobtap_topic_match_count (jobtap, topic) == 0)
         return 0;
     if (!(args = jobtap_args_create (jobtap, job)))
@@ -1141,6 +1143,8 @@ int jobtap_call (struct jobtap *jobtap,
     int64_t priority = FLUX_JOBTAP_PRIORITY_UNAVAIL;
     va_list ap;
 
+    if ((job->flags & FLUX_JOB_SYSTEM))
+        return 0;
     if (jobtap_topic_match_count (jobtap, topic) == 0)
         return 0;
 

@@ -46,6 +46,8 @@ libjob_manager_la_SOURCES = \
 	alloc.c \
 	housekeeping.h \
 	housekeeping.c \
+	sysjob.h \
+	sysjob.c \
 	start.h \
 	start.c \
 	list.h \
