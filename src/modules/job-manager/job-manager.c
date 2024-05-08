@@ -37,6 +37,7 @@
 #include "journal.h"
 #include "getattr.h"
 #include "update.h"
+#include "sysjob.h"
 #include "jobtap-internal.h"
 
 #include "job-manager.h"
@@ -230,6 +231,10 @@ int mod_main (flux_t *h, int argc, char **argv)
         flux_log_error (h, "error creating job update interface");
         goto done;
     }
+    if (!(ctx.sysjob = sysjob_ctx_create (&ctx))) {
+        flux_log_error (h, "error creating sysjob interface");
+        goto done;
+    }
     if (flux_msg_handler_addvec (h, htab, &ctx, &ctx.handlers) < 0) {
         flux_log_error (h, "flux_msghandler_add");
         goto done;
@@ -260,6 +265,7 @@ done:
     submit_ctx_destroy (ctx.submit);
     event_ctx_destroy (ctx.event);
     update_ctx_destroy (ctx.update);
+    sysjob_ctx_destroy (ctx.sysjob);
     /* job aux containers may call destructors in jobtap plugins, so destroy
      * jobs before unloading plugins; but don't destroy job hashes until after.
      */

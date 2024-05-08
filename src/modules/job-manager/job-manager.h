@@ -35,6 +35,7 @@ struct job_manager {
     struct purge *purge;
     struct queue *queue;
     struct update *update;
+    struct sysjob *sysjob;
     struct jobtap *jobtap;
 };
 

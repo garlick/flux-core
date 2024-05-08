@@ -44,6 +44,8 @@ libjob_manager_la_SOURCES = \
 	kill.c \
 	alloc.h \
 	alloc.c \
+	sysjob.h \
+	sysjob.c \
 	start.h \
 	start.c \
 	list.h \
@@ -128,6 +130,7 @@ test_ldadd = \
 	$(top_builddir)/src/common/libtap/libtap.la \
 	$(top_builddir)/src/common/librlist/librlist.la \
 	$(top_builddir)/src/common/libjob/libjob.la \
+	$(top_builddir)/src/common/libsubprocess/libsubprocess.la \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(top_builddir)/src/common/libflux-internal.la \
 	$(LIBPTHREAD) \

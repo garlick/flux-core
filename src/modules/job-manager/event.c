@@ -48,6 +48,7 @@
 #include "ccan/str/str.h"
 
 #include "alloc.h"
+#include "sysjob.h"
 #include "start.h"
 #include "drain.h"
 #include "journal.h"
@@ -304,6 +305,11 @@ int event_job_action (struct event *event, struct job *job)
                 return -1;
             break;
         case FLUX_JOB_STATE_RUN:
+            if ((job->flags & FLUX_JOB_SYSTEM)) {
+                if (sysjob_start (ctx->sysjob, job) < 0)
+                    return -1;
+                break;
+            }
             /* Send the start request only if prolog is not running/pending.
              */
             if (!job->perilog_active
