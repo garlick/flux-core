@@ -32,7 +32,7 @@
 #include "src/common/libeventlog/eventlog.h"
 #include "src/common/libjob/sign_none.h"
 #include "src/common/libsubprocess/command_private.h"
-#include "src/common/libsubprocess/client.h"
+#include "src/common/libsubprocess/bulk-exec.h"
 #include "src/common/librlist/rlist.h"
 
 #include "event.h"
@@ -45,8 +45,8 @@ static int sysjob_fluid_generator_id = 16383;
 struct exec_ctx {
     struct job *job;
     char *name;
-    flux_cmd_t *cmd;
-    zlistx_t *futures;
+    struct bulk_exec *bulk_exec;
+    bool started;
     struct rlist *rl;       // R diminished each time a subset is released
     struct idset *pending;  // broker ranks
     struct sysjob *sys;
@@ -60,22 +60,14 @@ struct sysjob {
     struct job_manager *ctx;
 };
 
-// zlistx_destructor_fn footprint
-static void future_destructor (void **item)
-{
-    if (item) {
-        flux_future_destroy (*item);
-        *item = NULL;
-    }
-}
+static struct bulk_exec_ops bulk_exec_ops;
 
 static void exec_ctx_destroy (struct exec_ctx *x)
 {
     if (x) {
         int saved_errno = errno;
         free (x->name);
-        flux_cmd_destroy (x->cmd);
-        zlistx_destroy (&x->futures);
+        bulk_exec_destroy (x->bulk_exec);
         rlist_destroy (x->rl);
         idset_destroy (x->pending);
         free (x);
@@ -96,14 +88,14 @@ static struct exec_ctx *exec_ctx_create (struct sysjob *sys,
     x->job = job;
     x->sys = sys;
     if (!(x->name = strdup (name))
-        || !(x->cmd = flux_cmd_copy (cmd)))
-        goto error;
-    if (!(x->futures = zlistx_new ())) {
-        errno = ENOMEM;
-        goto error;
-    }
-    zlistx_set_destructor (x->futures, future_destructor);
-    if (!(x->rl = rlist_from_json (R, NULL)))
+        || !(x->bulk_exec = bulk_exec_create (&bulk_exec_ops,
+                                              "rexec",
+                                              job->id,
+                                              name,
+                                              x))
+        || !(x->rl = rlist_from_json (R, NULL))
+        || !(x->pending = rlist_ranks (x->rl))
+        || bulk_exec_push_cmd (x->bulk_exec, x->pending, cmd, 0) < 0)
         goto error;
     return x;
 error:
@@ -111,29 +103,19 @@ error:
     return NULL;
 }
 
-/* Initialization of the fluid generator is deferred until the first sysjob
- * is created to ensure ctx->max_jobid is initialized.  That happens during
- * restart_from_kvs(), before the reactor starts, but after sysjob_ctx_create().
- */
-static int sysjob_ctx_init (struct sysjob *sys)
+static void bulk_start_cb (struct bulk_exec *bx, void *arg)
 {
-    if (!sys->gen_initialized) {
-        if (fluid_init (&sys->gen,
-                        sysjob_fluid_generator_id,
-                        fluid_get_timestamp (sys->ctx->max_jobid + 1)) < 0)
-            return -1;
-        sys->gen_initialized = true;
-    }
-    return 0;
 }
 
-static void sysjob_check_completion (struct exec_ctx *x)
+static void bulk_exit_cb (struct bulk_exec *bx,
+                          void *arg,
+                          const struct idset *ranks)
 {
-    /* Some subprocess RPCs are still awaiting "end of stream".
-     */
-    if (idset_count (x->pending) > 0)
-        return;
+}
 
+static void bulk_complete_cb (struct bulk_exec *bx, void *arg)
+{
+    struct exec_ctx *x = arg;
     /* finish: RUN->CLEANUP
      */
     if (event_job_post_pack (x->sys->ctx->event,
@@ -149,78 +131,30 @@ static void sysjob_check_completion (struct exec_ctx *x)
     }
 }
 
-static void sysjob_continuation (flux_future_t *f, void *arg)
+static void bulk_output_cb (struct bulk_exec *bx,
+                            flux_subprocess_t *p,
+                            const char *stream,
+                            const char *data,
+                            int data_len,
+                            void *arg)
 {
-    struct exec_ctx *x = arg;
-    flux_t *h = flux_future_get_flux (f);
-    int rank = flux_rpc_get_nodeid (f);
-    const char *hostname = flux_get_hostbyrank (h, rank);
-    int status;
+}
 
-    if (subprocess_rexec_get (f) < 0) {
-        if (errno != ENODATA) {
-            flux_log (h,
-                      LOG_ERR,
-                      "sysjob %s %s (rank %d): %s",
-                      x->name,
-                      hostname,
-                      rank,
-                      future_strerror (f, errno));
-        }
-        idset_clear (x->pending, rank);
-        sysjob_check_completion (x);
-        return;
-    }
-    if (subprocess_rexec_is_finished (f, &status)) {
-        if (WIFEXITED (status)) {
-            int n = WEXITSTATUS (status);
-            flux_log (h,
-                      n == 0 ? LOG_INFO : LOG_ERR,
-                      "sysjob %s %s (rank %d): exit %d",
-                      x->name,
-                      hostname,
-                      rank,
-                      n);
-        }
-        else if (WIFSIGNALED (status)) {
-            int n = WTERMSIG (status);
-            flux_log (h,
-                      LOG_ERR,
-                      "sysjob %s %s (rank %d): %s",
-                      x->name,
-                      hostname,
-                      rank,
-                      strsignal (n));
-        }
-        if (x->status == 0 && status > 0)
-            x->status = status;
-    }
-    flux_future_reset (f);
+static void bulk_error_cb (struct bulk_exec *bx,
+                           flux_subprocess_t *p,
+                           void *arg)
+{
 }
 
 int sysjob_start (struct sysjob *sys, struct job *job)
 {
     struct exec_ctx *x = job_aux_get (job, "sysjob");
-    unsigned int rank;
 
     if (!x)
         return -1;
-    if (x->pending)
+    if (x->started)
         return 0; // already started (maintain idempotency)
-    if (!(x->pending = rlist_ranks (x->rl)))
-        return -1;
-    rank = idset_first (x->pending);
-    while (rank != IDSET_INVALID_ID) {
-        flux_future_t *f;
-        if (!(f = subprocess_rexec (sys->ctx->h, "rexec", rank, x->cmd, 0))
-            || flux_future_then (f, -1., sysjob_continuation, x) < 0
-            || zlistx_add_end (x->futures, f) == NULL) {
-            flux_future_destroy (f);
-            return -1;
-        }
-        rank = idset_next (x->pending, rank);
-    }
-    return 0;
+    return bulk_exec_start (sys->ctx->h, x->bulk_exec);
 }
 
 /* N.B. see restart_map_cb() which does a similar thing for jobs read from
@@ -408,6 +342,22 @@ error:
     return NULL;
 }
 
+/* Initialization of the fluid generator is deferred until the first sysjob
+ * is created to ensure ctx->max_jobid is initialized.  That happens during
+ * restart_from_kvs(), before the reactor starts, but after sysjob_ctx_create().
+ */
+static int sysjob_ctx_init (struct sysjob *sys)
+{
+    if (!sys->gen_initialized) {
+        if (fluid_init (&sys->gen,
+                        sysjob_fluid_generator_id,
+                        fluid_get_timestamp (sys->ctx->max_jobid + 1)) < 0)
+            return -1;
+        sys->gen_initialized = true;
+    }
+    return 0;
+}
+
 flux_future_t *sysjob_create (struct sysjob *sys,
                               const char *name,
                               flux_cmd_t *cmd,
@@ -496,5 +446,13 @@ error:
     sysjob_ctx_destroy (sys);
     return NULL;
 }
+
+static struct bulk_exec_ops bulk_exec_ops = {
+    .on_start =     bulk_start_cb,
+    .on_exit =      bulk_exit_cb,
+    .on_complete =  bulk_complete_cb,
+    .on_output =    bulk_output_cb,
+    .on_error =     bulk_error_cb
+};
 
 // vi:ts=4 sw=4 expandtab
