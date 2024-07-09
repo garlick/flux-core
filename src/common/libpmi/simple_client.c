@@ -204,6 +204,16 @@ done:
     return result;
 }
 
+static bool valid_word (const char *s)
+{
+    while (*s) {
+        if (*s < '!' || *s > '~') // allow only the ABNF 'VCHAR' chars
+            return false;
+        s++;
+    }
+    return true;
+}
+
 int pmi_simple_client_kvs_put (struct pmi_simple_client *pmi,
                                const char *kvsname,
                                const char *key,
@@ -216,6 +226,8 @@ int pmi_simple_client_kvs_put (struct pmi_simple_client *pmi,
         return PMI_ERR_INIT;
     if (!kvsname || !key || !value)
         return PMI_ERR_INVALID_ARG;
+    if (!valid_word (value))
+        return PMI_ERR_INVALID_VAL;
     if (fprintf (pmi->f, "cmd=put kvsname=%s key=%s value=%s\n",
                  kvsname, key, value) < 0)
         goto done;

@@ -221,6 +221,12 @@ int main (int argc, char *argv[])
     ok (rc == PMI_ERR_INVALID_VAL_LENGTH,
         "pmi_simple_client_kvs_put val too long fails");
 
+    /* put: value contains illegal character
+     */
+    rc = pmi_simple_client_kvs_put (cli, name, "badchar", "a b");
+    ok (rc == PMI_ERR_INVALID_VAL,
+        "pmi_simple_client_kvs_put val with space fails");
+
     /* put: key too long
      */
     key = xzmalloc (cli->keylen_max + 1);
