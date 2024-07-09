@@ -552,7 +552,7 @@ static struct shell_pmi *pmi_create (flux_shell_t *shell, json_t *config)
      * jobid representation.
      */
     if (flux_job_id_encode (shell->jobid,
-                            "f58",
+                            "f58plain",
                             kvsname,
                             sizeof (kvsname)) < 0)
         goto error;
