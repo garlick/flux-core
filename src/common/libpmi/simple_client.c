@@ -255,7 +255,15 @@ int pmi_simple_client_kvs_get (struct pmi_simple_client *pmi,
         result = rc;
         goto done;
     }
-    if (keyval_parse_string (pmi->buf, "value", value, len) < 0)
+    /* mpiexec.hydra from mpich v4.2.0 and v4.1.1 responds with
+     * "value=whatever found=TRUE" which breaks a long standing assumption
+     * in Flux (and RFC 13) that a value includes everything between value=
+     * and end of line.  Change the parsing to get a "word" rather than a
+     * "string", which just means don't allow embedded spaces.  This allows
+     * Flux to be bootstrapped by those versions of mpich.
+     * See also: flux-framework/flux-core#6072
+     */
+    if (keyval_parse_word (pmi->buf, "value", value, len) < 0)
         goto done;
     result = PMI_SUCCESS;
 done:
