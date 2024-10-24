@@ -26,7 +26,7 @@
 #include "src/common/libutil/fdutils.h"
 #include "src/common/libsubprocess/subprocess_private.h" // for default bufsize
 
-#include "outbuf.h"
+#include "iobuf.h"
 #include "channel.h"
 
 struct channel {
@@ -36,7 +36,7 @@ struct channel {
     flux_watcher_t *w;
     bool eof_received;
     bool eof_delivered;
-    struct outbuf *buf;
+    struct iobuf *buf;
     int flags;
     char *name;
     bool writable;
@@ -89,22 +89,22 @@ static int flush_output_line (struct channel *ch)
     size_t len;
     bool eof = false;
 
-    len = nextline (outbuf_tail (ch->buf), outbuf_used (ch->buf));
+    len = nextline (iobuf_tail (ch->buf), iobuf_used (ch->buf));
     /* There is no complete line, but the buffer is full.
      * No more data can be added to terminate the line so we must flush.
      */
-    if (len == 0 && outbuf_full (ch->buf))
-        len = outbuf_used (ch->buf);
+    if (len == 0 && iobuf_full (ch->buf))
+        len = iobuf_used (ch->buf);
     /* There is no complete line nor full buffer, but EOF has been reached.
      * No more data will ever be added to terminate the line so we must flush.
      */
     if (len == 0 && ch->eof_received) {
-        len = outbuf_used (ch->buf);
+        len = iobuf_used (ch->buf);
         eof = true;
     }
     if (len > 0 || eof) {
-        int rc = call_output_callback (ch, outbuf_tail (ch->buf), len, eof);
-        outbuf_mark_free (ch->buf, len);
+        int rc = call_output_callback (ch, iobuf_tail (ch->buf), len, eof);
+        iobuf_mark_free (ch->buf, len);
         if (rc < 0)
             return -1;
     }
@@ -119,10 +119,10 @@ static int flush_output_raw (struct channel *ch)
 {
     int n;
     n = call_output_callback (ch,
-                              outbuf_tail (ch->buf),
-                              outbuf_used (ch->buf),
+                              iobuf_tail (ch->buf),
+                              iobuf_used (ch->buf),
                               ch->eof_received);
-    outbuf_mark_free (ch->buf, outbuf_used (ch->buf));
+    iobuf_mark_free (ch->buf, iobuf_used (ch->buf));
     return n;
 }
 
@@ -139,7 +139,7 @@ static void channel_output_cb (flux_reactor_t *r,
     /* Read a chunk of data into the buffer, not necessarily all that is ready.
      * Let the event loop iterate and read more as needed.
      */
-    n = read (ch->fd[0], outbuf_head (ch->buf), outbuf_free (ch->buf));
+    n = read (ch->fd[0], iobuf_head (ch->buf), iobuf_free (ch->buf));
     if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return; // spurious wakeup or revents without POLLIN?
@@ -161,7 +161,7 @@ static void channel_output_cb (flux_reactor_t *r,
         flux_watcher_stop (w);
     }
     else
-        outbuf_mark_used (ch->buf, n);
+        iobuf_mark_used (ch->buf, n);
     /* In case the channel output callback destroys the channel,
      * hold a reference for the remainder of this function.
      * See flux-framework/flux-core#6036.
@@ -183,7 +183,7 @@ static void channel_output_cb (flux_reactor_t *r,
             ch->error_cb (ch, &error, ch->arg);
         }
     }
-    outbuf_gc (ch->buf);
+    iobuf_gc (ch->buf);
     sdexec_channel_decref (ch);
 }
 
@@ -227,7 +227,7 @@ static void sdexec_channel_decref (struct channel *ch)
         if (ch->fd[1] >= 0)
             close (ch->fd[1]);
         flux_watcher_destroy (ch->w);
-        outbuf_destroy (ch->buf);
+        iobuf_destroy (ch->buf);
         free (ch->name);
         free (ch);
         errno = saved_errno;
@@ -293,7 +293,7 @@ struct channel *sdexec_channel_create_output (flux_t *h,
         goto error;
     if (bufsize == 0)
         bufsize = SUBPROCESS_DEFAULT_BUFSIZE;
-    if (!(ch->buf = outbuf_create (bufsize)))
+    if (!(ch->buf = iobuf_create (bufsize)))
         goto error;
     return ch;
 error:
@@ -363,8 +363,8 @@ json_t *sdexec_channel_get_stats (struct channel *ch)
             o = json_pack ("{s:i s:i s:i s:i s:b}",
                            "local_fd", ch->fd[0],
                            "remote_fd", ch->fd[1],
-                           "buf_used", outbuf_used (ch->buf),
-                           "buf_free", outbuf_free (ch->buf),
+                           "buf_used", iobuf_used (ch->buf),
+                           "buf_free", iobuf_free (ch->buf),
                            "eof", ch->eof_received);
         }
     }

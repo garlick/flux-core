@@ -26,8 +26,8 @@ libsdexec_la_SOURCES = \
 	list.c \
 	property.h \
 	property.c \
-	outbuf.h \
-	outbuf.c \
+	iobuf.h \
+	iobuf.c \
 	channel.h \
 	channel.c \
 	unit.h \
@@ -53,7 +53,7 @@ test_ldflags = \
 TESTS = \
 	test_parse.t \
 	test_channel.t \
-	test_channel_outbuf.t \
+	test_channel_output.t \
 	test_list.t \
 	test_property.t \
 	test_start.t \
@@ -74,10 +74,10 @@ test_channel_t_CPPFLAGS = $(test_cppflags)
 test_channel_t_LDADD = libsdexec.la $(test_ldadd)
 test_channel_t_LDFLAGS = $(test_ldflags)
 
-test_channel_outbuf_t_SOURCES = test/channel_outbuf.c
-test_channel_outbuf_t_CPPFLAGS = $(test_cppflags)
-test_channel_outbuf_t_LDADD = libsdexec.la $(test_ldadd)
-test_channel_outbuf_t_LDFLAGS = $(test_ldflags)
+test_channel_output_t_SOURCES = test/channel_output.c
+test_channel_output_t_CPPFLAGS = $(test_cppflags)
+test_channel_output_t_LDADD = libsdexec.la $(test_ldadd)
+test_channel_output_t_LDFLAGS = $(test_ldflags)
 
 test_list_t_SOURCES = test/list.c
 test_list_t_CPPFLAGS = $(test_cppflags)
