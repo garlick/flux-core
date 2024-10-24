@@ -39,8 +39,9 @@ struct channel {
     struct iobuf *buf;
     int flags;
     char *name;
-    bool writable;
+    bool is_input_channel;
     channel_output_f output_cb;
+    channel_input_f input_cb;
     channel_error_f error_cb;
     void *arg;
     int refcount;
@@ -207,7 +208,7 @@ void sdexec_channel_close_fd (struct channel *ch)
 
 void sdexec_channel_start_output (struct channel *ch)
 {
-    if (ch && !ch->eof_delivered)
+    if (ch && !ch->is_input_channel && !ch->eof_delivered)
         flux_watcher_start (ch->w);
 }
 
@@ -239,7 +240,9 @@ void sdexec_channel_destroy (struct channel *ch)
     sdexec_channel_decref (ch);
 }
 
-static struct channel *sdexec_channel_create (flux_t *h, const char *name)
+static struct channel *sdexec_channel_create (flux_t *h,
+                                              const char *name,
+                                              size_t bufsize)
 {
     struct channel *ch;
     uint32_t rank;
@@ -261,6 +264,10 @@ static struct channel *sdexec_channel_create (flux_t *h, const char *name)
     snprintf (ch->rankstr, sizeof (ch->rankstr), "%u", (unsigned int)rank);
     if (socketpair (PF_LOCAL, SOCK_STREAM, 0, ch->fd) < 0)
         goto error;
+    if (bufsize == 0)
+        bufsize = SUBPROCESS_DEFAULT_BUFSIZE;
+    if (!(ch->buf = iobuf_create (bufsize)))
+        goto error;
     return ch;
 error:
     sdexec_channel_destroy (ch);
@@ -277,7 +284,7 @@ struct channel *sdexec_channel_create_output (flux_t *h,
 {
     struct channel *ch;
 
-    if (!(ch = sdexec_channel_create (h, name)))
+    if (!(ch = sdexec_channel_create (h, name, bufsize)))
         return NULL;
     ch->output_cb = output_cb;
     ch->error_cb = error_cb;
@@ -291,23 +298,25 @@ struct channel *sdexec_channel_create_output (flux_t *h,
                                           channel_output_cb,
                                           ch)))
         goto error;
-    if (bufsize == 0)
-        bufsize = SUBPROCESS_DEFAULT_BUFSIZE;
-    if (!(ch->buf = iobuf_create (bufsize)))
-        goto error;
     return ch;
 error:
     sdexec_channel_destroy (ch);
     return NULL;
 }
 
-struct channel *sdexec_channel_create_input (flux_t *h, const char *name)
+struct channel *sdexec_channel_create_input (flux_t *h,
+                                             const char *name,
+                                             size_t bufsize,
+                                             channel_input_f input_cb,
+                                             void *arg)
 {
     struct channel *ch;
 
-    if (!(ch = sdexec_channel_create (h, name)))
+    if (!(ch = sdexec_channel_create (h, name, bufsize)))
         return NULL;
-    ch->writable = true;
+    ch->is_input_channel = true;
+    ch->input_cb = input_cb;
+    ch->arg = arg;
     return ch;
 }
 
@@ -323,7 +332,7 @@ int sdexec_channel_write (struct channel *ch, json_t *io)
     }
     if (iodecode (io, NULL, NULL, &data, &len, &eof) < 0)
         return -1;
-    if (!ch->writable || ch->fd[0] < 0) {
+    if (!ch->is_input_channel || ch->fd[0] < 0) {
         errno = EINVAL;
         return -1;
     }
@@ -354,10 +363,12 @@ json_t *sdexec_channel_get_stats (struct channel *ch)
     json_t *o = NULL;
 
     if (ch) {
-        if (ch->writable) {
-            o = json_pack ("{s:i s:i}",
+        if (ch->is_input_channel) {
+            o = json_pack ("{s:i s:i s:i s:i}",
                            "local_fd", ch->fd[0],
-                           "remote_fd", ch->fd[1]);
+                           "remote_fd", ch->fd[1],
+                           "buf_used", iobuf_used (ch->buf),
+                           "buf_free", iobuf_free (ch->buf));
         }
         else {
             o = json_pack ("{s:i s:i s:i s:i s:b}",

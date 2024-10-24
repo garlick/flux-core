@@ -61,7 +61,7 @@ void test_input (void)
         BAIL_OUT ("could not create loop flux_t handle for testing");
     if (flux_attr_set_cacheonly (h, "rank", "0") < 0)
         BAIL_OUT ("could not set rank for testing");
-    ch = sdexec_channel_create_input (h, "in");
+    ch = sdexec_channel_create_input (h, "in", 0, NULL, NULL);
     ok (ch != NULL,
         "sdexec_channel_create_input works");
     fd = sdexec_channel_get_fd (ch);
@@ -250,11 +250,11 @@ void test_inval (void)
         "sdexec_channel_create_output name=NULL fails with EINVAL");
 
     errno = 0;
-    ch = sdexec_channel_create_input (NULL, "foo");
+    ch = sdexec_channel_create_input (NULL, "foo", 0, NULL, NULL);
     ok (ch == NULL && errno == EINVAL,
         "sdexec_channel_create_input h=NULL fails with EINVAL");
     errno = 0;
-    ch = sdexec_channel_create_input (h, NULL);
+    ch = sdexec_channel_create_input (h, NULL, 0, NULL, NULL);
     ok (ch == NULL && errno == EINVAL,
         "sdexec_channel_create_input name=NULL fails with EINVAL");
 

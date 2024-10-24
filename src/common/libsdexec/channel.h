@@ -21,6 +21,7 @@ enum {
 };
 
 typedef void (*channel_output_f)(struct channel *ch, json_t *io, void *arg);
+typedef void (*channel_input_f)(struct channel *ch, size_t bytes, void *arg);
 typedef void (*channel_error_f)(struct channel *ch,
                                 flux_error_t *error,
                                 void *arg);
@@ -46,8 +47,14 @@ struct channel *sdexec_channel_create_output (flux_t *h,
 
 /* Open a channel for input to the systemd unit.
  * The channel may be written to using sdexec_channel_write().
+ * When data moves out of the buffer, the input buffer is called to inform
+ * the caller that more data can be written.
  */
-struct channel *sdexec_channel_create_input (flux_t *h, const char *name);
+struct channel *sdexec_channel_create_input (flux_t *h,
+                                             const char *name,
+                                             size_t bufsize,
+                                             channel_input_f input_cb,
+                                             void *arg);
 
 /* Write to channel created with sdexec_channel_create_input ().
  * The ioencoded object's rank and stream name are ignored.
