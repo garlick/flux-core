@@ -388,7 +388,7 @@ error:
     delete_message (ctx->requests, msg);
 }
 
-/* Log an error receiving data from unit stdout or stderr.  channel_cb will
+/* Log a channel error.  For output channels, channel_output_cb will
  * be called with an EOF after this callback returns.
  */
 static void cherror_cb (struct channel *ch, flux_error_t *error, void *arg)
@@ -404,7 +404,7 @@ static void cherror_cb (struct channel *ch, flux_error_t *error, void *arg)
  * waiting to receive (e.g. a final EOF), call finalize_exec_request_if_done()
  * to take care of that if needed.
  */
-static void channel_cb (struct channel *ch, json_t *io, void *arg)
+static void channel_output_cb (struct channel *ch, json_t *io, void *arg)
 {
     struct sdproc *proc = arg;
     flux_t *h = proc->ctx->h;
@@ -554,6 +554,20 @@ static int get_stream_line_buffer (json_t *cmd,
     return 0;
 }
 
+static struct channel *create_in_channel (flux_t *h,
+                                          json_t *cmd,
+                                          const char *stream)
+{
+    size_t bufsize;
+    if (get_stream_bufsize (cmd, stream, &bufsize) < 0)
+        return NULL;
+    return sdexec_channel_create_input (h,
+                                        stream,
+                                        bufsize,
+                                        NULL,
+                                        NULL);
+}
+
 static struct channel *create_out_channel (flux_t *h,
                                            json_t *cmd,
                                            const char *stream,
@@ -569,7 +583,7 @@ static struct channel *create_out_channel (flux_t *h,
                                          stream,
                                          bufsize,
                                          linebuf ? CHANNEL_LINEBUF : 0,
-                                         channel_cb,
+                                         channel_output_cb,
                                          cherror_cb,
                                          arg);
 }
@@ -620,7 +634,7 @@ static struct sdproc *sdproc_create (struct sdexec_ctx *ctx,
         goto error;
     /* Create channels for stdio as required by flags.
      */
-    if (!(proc->in = sdexec_channel_create_input (ctx->h, "stdin")))
+    if (!(proc->in = create_in_channel (ctx->h, proc->cmd, "stdin")))
         goto error;
     if ((flags & SUBPROCESS_REXEC_STDOUT)) {
         if (!(proc->out = create_out_channel (ctx->h,
