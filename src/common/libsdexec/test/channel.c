@@ -86,6 +86,8 @@ void test_input (void)
         "sdexec_channel_write works");
     ok (flux_reactor_run (flux_get_reactor (h), FLUX_REACTOR_ONCE) >= 0,
         "flux_reactor_run ran ONCE");
+    ok (flux_reactor_run (flux_get_reactor (h), FLUX_REACTOR_ONCE) >= 0,
+        "flux_reactor_run ran TWICE");
     ok (input_called == true,
         "input callback was called");
     ok (input_eof_set == false,

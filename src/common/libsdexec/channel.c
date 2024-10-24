@@ -188,6 +188,55 @@ static void channel_output_cb (flux_reactor_t *r,
     sdexec_channel_decref (ch);
 }
 
+/* fd watcher for write end of channel file descriptor
+ */
+static void channel_input_cb (flux_reactor_t *r,
+                              flux_watcher_t *w,
+                              int revents,
+                              void *arg)
+{
+    struct channel *ch = arg;
+    ssize_t n;
+
+    n = write (ch->fd[0], iobuf_tail (ch->buf), iobuf_used (ch->buf));
+    if (n < 0) {
+        if (ch->error_cb) {
+            flux_error_t error;
+            errprintf (&error,
+                       "error reading from %s: %s",
+                       ch->name,
+                       strerror (errno));
+            ch->error_cb (ch, &error, ch->arg);
+            return;
+        }
+    }
+    if (n > 0) {
+        iobuf_mark_free (ch->buf, n);
+        iobuf_gc (ch->buf);
+        if (ch->input_cb)
+            ch->input_cb (ch, n, ch->arg);
+    }
+    if (iobuf_used (ch->buf) == 0) {
+        if (ch->eof_received) {
+            int fd = ch->fd[0];
+
+            ch->fd[0] = -1;
+            if (close (fd) < 0) {
+                if (ch->error_cb) {
+                    flux_error_t error;
+                    errprintf (&error,
+                               "error closing %s: %s",
+                               ch->name,
+                               strerror (errno));
+                    ch->error_cb (ch, &error, ch->arg);
+                }
+            }
+            ch->eof_delivered = true;
+        }
+        flux_watcher_stop (ch->w);
+    }
+}
+
 int sdexec_channel_get_fd (struct channel *ch)
 {
     return ch ? ch->fd[1] : -1;
@@ -317,7 +366,18 @@ struct channel *sdexec_channel_create_input (flux_t *h,
     ch->is_input_channel = true;
     ch->input_cb = input_cb;
     ch->arg = arg;
+    if (fd_set_nonblocking (ch->fd[0]) < 0)
+        goto error;
+    if (!(ch->w = flux_fd_watcher_create (flux_get_reactor (h),
+                                          ch->fd[0],
+                                          FLUX_POLLOUT,
+                                          channel_input_cb,
+                                          ch)))
+        goto error;
     return ch;
+error:
+    sdexec_channel_destroy (ch);
+    return NULL;
 }
 
 int sdexec_channel_write (struct channel *ch, json_t *io)
@@ -326,7 +386,7 @@ int sdexec_channel_write (struct channel *ch, json_t *io)
     int len;
     bool eof;
 
-    if (!ch || !io) {
+    if (!ch || !io || ch->eof_received == true) {
         errno = EINVAL;
         return -1;
     }
@@ -337,23 +397,25 @@ int sdexec_channel_write (struct channel *ch, json_t *io)
         return -1;
     }
     if (data && len > 0) {
-        int count = 0;
-        while (count < len) {
-            ssize_t n;
-            if ((n = write (ch->fd[0], data + count, len - count)) < 0) {
-                ERRNO_SAFE_WRAP (free, data);
-                return -1;
-            }
-            count += n;
+        if (len > iobuf_free (ch->buf)) {
+            errno = ENOSPC;
+            return -1;
         }
-        free (data);
+        memcpy (iobuf_head (ch->buf), data, len);
+        iobuf_mark_used (ch->buf, len);
+        flux_watcher_start (ch->w);
     }
     if (eof) {
-        int fd = ch->fd[0];
+        ch->eof_received = true;
+        if (iobuf_used (ch->buf) == 0) {
+            int fd = ch->fd[0];
 
-        ch->fd[0] = -1;
-        if (close (fd) < 0)
-            return -1;
+            ch->fd[0] = -1;
+            if (close (fd) < 0)
+                return -1;
+            ch->eof_delivered = true;
+            // watcher must be already running if there is data in ch->buf
+        }
     }
     return 0;
 }
