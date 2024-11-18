@@ -462,6 +462,7 @@ check_PROGRAMS += \
 	mpi/hello \
 	mpi/abort \
 	mpi/version \
+	mpi/testexec \
 	mpi/mpich_basic/self \
 	mpi/mpich_basic/simple \
 	mpi/mpich_basic/sendrecv \
@@ -559,6 +560,11 @@ mpi_hello_SOURCES = mpi/hello.c
 mpi_hello_CPPFLAGS = $(MPI_CFLAGS) $(test_cppflags)
 mpi_hello_LDADD = $(MPI_CLDFLAGS) $(test_ldadd)
 mpi_hello_LDFLAGS = $(test_ldflags)
+
+mpi_testexec_SOURCES = mpi/testexec.c
+mpi_testexec_CPPFLAGS = $(MPI_CFLAGS) $(test_cppflags)
+mpi_testexec_LDADD = $(MPI_CLDFLAGS) $(test_ldadd)
+mpi_testexec_LDFLAGS = $(test_ldflags)
 
 mpi_abort_SOURCES = mpi/abort.c
 mpi_abort_CPPFLAGS = $(MPI_CFLAGS) $(test_cppflags)
