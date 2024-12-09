@@ -16,13 +16,13 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <fcntl.h>
-#include <ev.h>
+#include <uv.h>
 #include <flux/core.h>
 
 #include "reactor_private.h"
 
 struct flux_reactor {
-    struct ev_loop *loop;
+    uv_loop_t loop;
     int usecount;
     unsigned int errflag:1;
 };
@@ -40,12 +40,7 @@ void flux_reactor_decref (flux_reactor_t *r)
 {
     if (r && --r->usecount == 0) {
         int saved_errno = errno;
-        if (r->loop) {
-            if (ev_is_default_loop (r->loop))
-                ev_default_destroy ();
-            else
-                ev_loop_destroy (r->loop);
-        }
+        (void)uv_loop_close (&r->loop); // could return -EBUSY
         free (r);
         errno = saved_errno;
     }
@@ -65,83 +60,82 @@ void flux_reactor_destroy (flux_reactor_t *r)
 flux_reactor_t *flux_reactor_create (int flags)
 {
     flux_reactor_t *r;
+    int uverr;
 
     if (valid_flags (flags, FLUX_REACTOR_SIGCHLD) < 0)
         return NULL;
     if (!(r = calloc (1, sizeof (*r))))
         return NULL;
-    if ((flags & FLUX_REACTOR_SIGCHLD))
-        r->loop = ev_default_loop (EVFLAG_SIGNALFD);
-    else
-        r->loop = ev_loop_new (EVFLAG_NOSIGMASK);
-    if (!r->loop) {
-        errno = ENOMEM;
-        flux_reactor_destroy (r);
+    uverr = uv_loop_init (&r->loop);
+    if (uverr < 0) {
+        free (r);
+        errno = -uverr;
         return NULL;
     }
-    ev_set_userdata (r->loop, r);
     r->usecount = 1;
     return r;
 }
 
 int flux_reactor_run (flux_reactor_t *r, int flags)
 {
-    int ev_flags = 0;
+    uv_run_mode mode;
     int count;
 
-    if (valid_flags (flags, FLUX_REACTOR_NOWAIT | FLUX_REACTOR_ONCE) < 0)
-        return -1;
-    if (flags & FLUX_REACTOR_NOWAIT)
-        ev_flags |= EVRUN_NOWAIT;
-    if (flags & FLUX_REACTOR_ONCE)
-        ev_flags |= EVRUN_ONCE;
+    if (flags == FLUX_REACTOR_NOWAIT)
+        mode = UV_RUN_NOWAIT;
+    else if (flags == FLUX_REACTOR_ONCE)
+        mode = UV_RUN_ONCE;
+    else if (flags == 0)
+        mode = UV_RUN_DEFAULT;
+    else {
+        errno = EINVAL;
+        return-1;
+    }
     r->errflag = 0;
-    count = ev_run (r->loop, ev_flags);
+    count = uv_run (&r->loop, mode);
     return (r->errflag ? -1 : count);
 }
 
 double flux_reactor_time (void)
 {
-    return ev_time ();
+    return 1E-9 * uv_hrtime ();
 }
 
 double flux_reactor_now (flux_reactor_t *r)
 {
-    return ev_now (r->loop);
+    return 1E-3 * uv_now (&r->loop);
 }
 
 void flux_reactor_now_update (flux_reactor_t *r)
 {
-    return ev_now_update (r->loop);
+    uv_update_time (&r->loop);
 }
 
 void flux_reactor_stop (flux_reactor_t *r)
 {
     r->errflag = 0;
-    ev_break (r->loop, EVBREAK_ALL);
+    uv_stop (&r->loop);
 }
 
 void flux_reactor_stop_error (flux_reactor_t *r)
 {
     r->errflag = 1;
-    ev_break (r->loop, EVBREAK_ALL);
+    uv_stop (&r->loop);
 }
 
 void flux_reactor_active_incref (flux_reactor_t *r)
 {
-    if (r)
-        ev_ref (r->loop);
+    // FIXME - see https://docs.libuv.org/en/v1.x/handle.html#refcount
 }
 
 void flux_reactor_active_decref (flux_reactor_t *r)
 {
-    if (r)
-        ev_unref (r->loop);
+    // FIXME
 }
 
 void *reactor_get_loop (flux_reactor_t *r)
 {
-    return r ? r->loop : NULL;
+    return r ? &r->loop : NULL;
 }
 
 /*

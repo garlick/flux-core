@@ -17,6 +17,7 @@ AM_CPPFLAGS = \
 	-DLUADIR=\"$(luadir)\" \
 	-DLUAEXECDIR=\"$(luaexecdir)\" \
 	$(JANSSON_CFLAGS) \
+	$(LIBUV_CFLAGS) \
 	$(LIBUUID_CFLAGS)
 
 if INTERNAL_LIBEV
@@ -141,6 +142,7 @@ test_ldadd = \
 	$(top_builddir)/src/common/libtap/libtap.la \
 	$(LIBUUID_LIBS) \
 	$(JANSSON_LIBS) \
+	$(LIBUV_LIBS) \
 	$(LIBPTHREAD) \
 	$(LIBDL)
 
