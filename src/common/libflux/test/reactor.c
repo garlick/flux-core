@@ -25,6 +25,8 @@
 #include "src/common/libtap/tap.h"
 #include "ccan/array_size/array_size.h"
 
+#include "reactor_private.h"
+
 void watcher_is (flux_watcher_t *w,
                  bool exp_active,
                  bool exp_referenced,
@@ -553,52 +555,6 @@ static void test_signal (flux_reactor_t *reactor)
     flux_watcher_destroy (idle);
 }
 
-static pid_t child_pid = -1;
-static void child_cb (flux_reactor_t *r,
-                      flux_watcher_t *w,
-                      int revents,
-                      void *arg)
-{
-    int pid = flux_child_watcher_get_rpid (w);
-    int rstatus = flux_child_watcher_get_rstatus (w);
-    ok (pid == child_pid,
-        "child watcher called with expected rpid");
-    ok (WIFSIGNALED (rstatus) && WTERMSIG (rstatus) == SIGHUP,
-        "child watcher called with expected rstatus");
-    flux_watcher_stop (w);
-}
-
-static void test_child  (flux_reactor_t *reactor)
-{
-    flux_watcher_t *w;
-    flux_reactor_t *r;
-
-    child_pid = fork ();
-    if (child_pid == 0) {
-        pause ();
-        exit (0);
-    }
-    errno = 0;
-    w = flux_child_watcher_create (reactor, child_pid, false, child_cb, NULL);
-    ok (w == NULL && errno == EINVAL,
-        "child watcher failed with EINVAL on non-SIGCHLD reactor");
-    ok ((r = flux_reactor_create (FLUX_REACTOR_SIGCHLD)) != NULL,
-        "created reactor with SIGCHLD flag");
-    w = flux_child_watcher_create (r, child_pid, false, child_cb, NULL);
-    ok (w != NULL,
-        "created child watcher");
-    generic_watcher_check (w, "signal");
-
-    ok (kill (child_pid, SIGHUP) == 0,
-        "sent child SIGHUP");
-    flux_watcher_start (w);
-
-    ok (flux_reactor_run (r, 0) == 0,
-        "reactor ran successfully");
-    flux_watcher_destroy (w);
-    flux_reactor_destroy (r);
-}
-
 struct stat_ctx {
     int fd;
     char *path;
@@ -930,6 +886,31 @@ static void test_priority (flux_reactor_t *r)
     flux_watcher_destroy (priority_idle);
 }
 
+static void sigchld_cb (pid_t pid, int status, void *arg)
+{
+}
+
+void test_sigchld (void)
+{
+    flux_reactor_t *r;
+
+    ok ((r = flux_reactor_create (FLUX_REACTOR_SIGCHLD)) != NULL,
+        "flux_reactor_create FLUX_REACTOR_SIGCHLD works");
+    ok (reactor_sigchld_register (r, sigchld_cb, NULL) == 0,
+        "reactor_sigchld_register works");
+    reactor_sigchld_unregister (r);
+
+
+    flux_reactor_destroy (r);
+
+    if (!(r = flux_reactor_create (0)))
+        BAIL_OUT ("flux_reactor_create 0 failed");
+    errno = 0;
+    ok (reactor_sigchld_register (r, sigchld_cb, NULL) < 0 && errno == EINVAL,
+        "reactor_sigchld_register fails with EINVAL without SIGCHLD flag");
+    flux_reactor_destroy (r);
+}
+
 int main (int argc, char *argv[])
 {
     flux_reactor_t *reactor;
@@ -953,7 +934,6 @@ int main (int argc, char *argv[])
     test_idle (reactor);
     test_prepcheck (reactor);
     test_signal (reactor);
-    test_child (reactor);
     test_stat (reactor);
     test_handle (reactor);
     test_unref (reactor);
@@ -964,6 +944,8 @@ int main (int argc, char *argv[])
 
     lives_ok ({ reactor_destroy_early ();},
         "destroying reactor then watcher doesn't segfault");
+
+    test_sigchld ();
 
     done_testing();
     return (0);

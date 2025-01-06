@@ -20,6 +20,8 @@ noinst_LTLIBRARIES = \
 libsubprocess_la_SOURCES = \
 	command.c \
 	command_private.h \
+	child_watcher.h \
+	child_watcher.c \
 	local.c \
 	local.h \
 	fork.c \
@@ -57,6 +59,7 @@ TESTS = \
 	test_iochan.t \
 	test_fbuf.t \
 	test_fbuf_watcher.t \
+	test_child_watcher.t \
 	test_bulk-exec-einval.t
 
 check_PROGRAMS = \
@@ -156,6 +159,11 @@ test_fbuf_watcher_t_SOURCES = test/fbuf_watcher.c
 test_fbuf_watcher_t_CPPFLAGS = $(test_cppflags)
 test_fbuf_watcher_t_LDADD = $(test_ldadd)
 test_fbuf_watcher_t_LDFLAGS = $(test_ldflags)
+
+test_child_watcher_t_SOURCES = test/child_watcher.c
+test_child_watcher_t_CPPFLAGS = $(test_cppflags)
+test_child_watcher_t_LDADD = $(test_ldadd)
+test_child_watcher_t_LDFLAGS = $(test_ldflags)
 
 test_bulk_exec_einval_t_SOURCES = test/bulk-exec-einval.c
 test_bulk_exec_einval_t_CPPFLAGS = $(test_cppflags)

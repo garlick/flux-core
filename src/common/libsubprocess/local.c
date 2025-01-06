@@ -33,6 +33,7 @@
 #include "fork.h"
 #include "posix_spawn.h"
 #include "util.h"
+#include "child_watcher.h"
 
 static void local_channel_flush (struct subprocess_channel *c)
 {
@@ -457,9 +458,9 @@ static void child_watch_cb (flux_reactor_t *r,
     flux_subprocess_t *p = arg;
     int status;
 
-    if ((status = flux_child_watcher_get_rstatus (w)) < 0) {
+    if ((status = child_watcher_get_rstatus (w)) < 0) {
         llog_error (p,
-                    "flux_child_watcher_get_rstatus: %s",
+                    "child_watcher_get_rstatus: %s",
                     strerror (errno));
         return;
     }
@@ -502,13 +503,11 @@ static int start_local_watchers (flux_subprocess_t *p)
 {
     struct subprocess_channel *c;
 
-    /* no-op if reactor is !FLUX_REACTOR_SIGCHLD */
-    if (!(p->child_w = flux_child_watcher_create (p->reactor,
-                                                  p->pid,
-                                                  true,
-                                                  child_watch_cb,
-                                                  p))) {
-        llog_debug (p, "flux_child_watcher_create: %s", strerror (errno));
+    if (!(p->child_w = child_watcher_create (p->reactor,
+                                             p->pid,
+                                             child_watch_cb,
+                                             p))) {
+        llog_debug (p, "child_watcher_create: %s", strerror (errno));
         return -1;
     }
     flux_watcher_start (p->child_w);

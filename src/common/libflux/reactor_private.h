@@ -16,6 +16,13 @@
 /* retrieve underlying loop implementation - for watcher_wrap.c only */
 void *reactor_get_loop (flux_reactor_t *r);
 
+typedef void (*sigchld_f)(pid_t pid, int status, void *arg);
+
+int reactor_sigchld_register (flux_reactor_t *r, sigchld_f cb, void *arg);
+void reactor_sigchld_unregister (flux_reactor_t *r);
+
+int reactor_get_flags (flux_reactor_t *r);
+
 #endif /* !_FLUX_CORE_REACTOR_PRIVATE_H */
 
 /*

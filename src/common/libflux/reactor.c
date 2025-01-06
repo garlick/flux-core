@@ -11,6 +11,8 @@
 #if HAVE_CONFIG_H
 #include "config.h"
 #endif
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <string.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -24,6 +26,11 @@ struct flux_reactor {
     struct ev_loop *loop;
     int usecount;
     unsigned int errflag:1;
+    int flags;
+
+    flux_watcher_t *sigchld_w;
+    sigchld_f sigchld_cb;
+    void *sigchld_arg;
 };
 
 static int valid_flags (int flags, int valid)
@@ -39,12 +46,9 @@ void flux_reactor_decref (flux_reactor_t *r)
 {
     if (r && --r->usecount == 0) {
         int saved_errno = errno;
-        if (r->loop) {
-            if (ev_is_default_loop (r->loop))
-                ev_default_destroy ();
-            else
-                ev_loop_destroy (r->loop);
-        }
+        // N.B. decrefs reactor but no double free if r->usecount == -1
+        flux_watcher_destroy (r->sigchld_w);
+        ev_loop_destroy (r->loop);
         free (r);
         errno = saved_errno;
     }
@@ -61,6 +65,56 @@ void flux_reactor_destroy (flux_reactor_t *r)
     flux_reactor_decref (r);
 }
 
+static void sigchld_cb (flux_reactor_t *r,
+                        flux_watcher_t *w,
+                        int revents,
+                        void *arg)
+{
+    pid_t pid;
+    int status;
+
+    do {
+        pid = waitpid (-1, &status, WNOHANG | WUNTRACED | WCONTINUED);
+        if (pid > 0) {
+            if (r->sigchld_cb)
+                r->sigchld_cb (pid, status, r->sigchld_arg);
+        }
+    } while (pid > 0);
+}
+
+static flux_watcher_t *sigchld_create (flux_reactor_t *r)
+{
+    flux_watcher_t *w;
+    if (!(w = flux_signal_watcher_create (r, SIGCHLD, sigchld_cb, NULL)))
+        return NULL;
+    flux_watcher_unref (w); // don't prevent loop from exiting
+    flux_reactor_decref (r); // don't prevent reactor destruction
+    flux_watcher_start (w);
+    return w;
+}
+
+void reactor_sigchld_unregister (flux_reactor_t *r)
+{
+    r->sigchld_cb = NULL;
+    r->sigchld_arg = NULL;
+}
+
+int reactor_sigchld_register (flux_reactor_t *r, sigchld_f cb, void *arg)
+{
+    if (!r->sigchld_w) {
+        errno = EINVAL;
+        return -1;
+    }
+    r->sigchld_cb = cb;
+    r->sigchld_arg = arg;
+    return 0;
+}
+
+int reactor_get_flags (flux_reactor_t *r)
+{
+    return r ? r->flags : 0;
+}
+
 flux_reactor_t *flux_reactor_create (int flags)
 {
     flux_reactor_t *r;
@@ -69,18 +123,22 @@ flux_reactor_t *flux_reactor_create (int flags)
         return NULL;
     if (!(r = calloc (1, sizeof (*r))))
         return NULL;
-    if ((flags & FLUX_REACTOR_SIGCHLD))
-        r->loop = ev_default_loop (EVFLAG_SIGNALFD);
-    else
-        r->loop = ev_loop_new (EVFLAG_NOSIGMASK);
+    r->flags = flags;
+    r->loop = ev_loop_new (EVFLAG_NOSIGMASK | EVFLAG_SIGNALFD);
     if (!r->loop) {
         errno = ENOMEM;
-        flux_reactor_destroy (r);
-        return NULL;
+        goto error;
     }
     ev_set_userdata (r->loop, r);
     r->usecount = 1;
+    if ((flags & FLUX_REACTOR_SIGCHLD)) {
+        if (!(r->sigchld_w = sigchld_create (r)))
+            goto error;
+    }
     return r;
+error:
+    flux_reactor_destroy (r);
+    return NULL;
 }
 
 int flux_reactor_run (flux_reactor_t *r, int flags)
