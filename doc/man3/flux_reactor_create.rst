@@ -33,8 +33,8 @@ be used to monitor for events on file descriptors, ZeroMQ sockets, timers, and
 There is currently only one possible flag for reactor creation:
 
 FLUX_REACTOR_SIGCHLD
-   The reactor will internally register a SIGCHLD handler and be capable
-   of handling flux child watchers (see :man3:`flux_child_watcher_create`).
+   The reactor will internally register a SIGCHLD handler that calls
+   :linux:man3:`waitpid` on all child processes.
 
 For each event source and type that is to be monitored, a :type:`flux_watcher_t`
 object is created using a type-specific create function, and started
