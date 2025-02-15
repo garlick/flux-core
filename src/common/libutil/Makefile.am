@@ -107,7 +107,9 @@ libutil_la_SOURCES = \
 	parse_size.c \
 	basename.h \
 	basename.c \
-	ansi_color.h
+	ansi_color.h \
+	genders.c \
+	genders.h
 
 TESTS = test_sha1.t \
 	test_sha256.t \
