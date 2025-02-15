@@ -163,7 +163,8 @@ test_cppflags = \
 
 check_PROGRAMS = \
 	$(TESTS) \
-	test_getaddr
+	test_getaddr \
+	test_genders
 
 TEST_EXTENSIONS = .t
 T_LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) \
@@ -307,3 +308,9 @@ test_sigutil_t_LDADD = $(test_ldadd)
 test_parse_size_t_SOURCES = test/parse_size.c
 test_parse_size_t_CPPFLAGS = $(test_cppflags)
 test_parse_size_t_LDADD = $(test_ldadd)
+
+test_genders_SOURCES = test/genders.c
+test_genders_CPPFLAGS = $(test_cppflags)
+test_genders_LDADD = \
+	$(test_ldadd) \
+	$(top_builddir)/src/common/libhostlist/libhostlist.la
