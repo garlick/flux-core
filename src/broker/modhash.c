@@ -27,11 +27,13 @@
 #include "broker.h"
 #include "modhash.h"
 #include "overlay.h"
+#include "trace.h"
 
 struct modhash {
     zhash_t *zh_byuuid;
     flux_msg_handler_t **handlers;
     struct broker *ctx;
+    struct flux_msglist *trace_requests;
 };
 
 static json_t *modhash_get_modlist (modhash_t *mh,
@@ -53,6 +55,11 @@ int modhash_response_sendmsg_new (modhash_t *mh, flux_msg_t **msg)
         errno = ENOSYS;
         return -1;
     }
+    (void)trace_module_msg (mh->ctx->h,
+                            "rx",
+                            module_get_name (p),
+                            mh->trace_requests,
+                            *msg);
     return module_sendmsg_new (p, msg);
 }
 
@@ -150,6 +157,11 @@ static void module_cb (module_t *p, void *arg)
         goto done;
     switch (type) {
         case FLUX_MSGTYPE_RESPONSE:
+            (void)trace_module_msg (ctx->h,
+                                    "tx",
+                                    module_get_name (p),
+                                    ctx->modhash->trace_requests,
+                                    msg);
             (void)broker_response_sendmsg_new (ctx, &msg);
             break;
         case FLUX_MSGTYPE_REQUEST:
@@ -177,9 +189,19 @@ static void module_cb (module_t *p, void *arg)
                     flux_log_error (ctx->h, "send offline response message");
                 break;
             }
+            (void)trace_module_msg (ctx->h,
+                                    "tx",
+                                    module_get_name (p),
+                                    ctx->modhash->trace_requests,
+                                    msg);
             broker_request_sendmsg_new (ctx, &msg);
             break;
         case FLUX_MSGTYPE_EVENT:
+            (void)trace_module_msg (ctx->h,
+                                    "tx",
+                                    module_get_name (p),
+                                    ctx->modhash->trace_requests,
+                                    msg);
             if (broker_event_sendmsg_new (ctx, &msg) < 0) {
                 flux_log_error (ctx->h,
                                 "%s(%s): broker_event_sendmsg_new %s",
@@ -492,6 +514,11 @@ static void trace_cb (flux_t *h,
         errno = EPROTO;
         goto error;
     }
+    if (json_array_size (names) == 0) {
+        if (flux_msglist_append (ctx->modhash->trace_requests, msg) < 0)
+            goto error;
+        return;
+    }
     /* Put modules in a list as the names are checked,
      */
     if (!(l = zlist_new ()))
@@ -585,6 +612,7 @@ static void disconnect_cb (flux_t *h,
         module_trace_disconnect (p, msg);
         p = zhash_next (ctx->modhash->zh_byuuid);
     }
+    (void)flux_msglist_disconnect (ctx->modhash->trace_requests, msg);
 }
 
 static const struct flux_msg_handler_spec htab[] = {
@@ -645,6 +673,8 @@ modhash_t *modhash_create (struct broker *ctx)
         errno = ENOMEM;
         goto error;
     }
+    if (!(mh->trace_requests = flux_msglist_create ()))
+        goto error;
     return mh;
 error:
     modhash_destroy (mh);
@@ -659,6 +689,7 @@ int modhash_destroy (modhash_t *mh)
     int count = 0;
 
     if (mh) {
+        flux_msglist_destroy (mh->trace_requests);
         if (mh->zh_byuuid) {
             FOREACH_ZHASH (mh->zh_byuuid, uuid, p) {
                 log_msg ("broker module '%s' was not properly shut down",
@@ -772,6 +803,11 @@ int modhash_event_mcast (modhash_t *mh, const flux_msg_t *msg)
 
     p = zhash_first (mh->zh_byuuid);
     while (p) {
+        (void)trace_module_msg (mh->ctx->h,
+                                "rx",
+                                module_get_name (p),
+                                mh->trace_requests,
+                                msg);
         if (module_event_cast (p, msg) < 0)
             return -1;
         p = zhash_next (mh->zh_byuuid);
