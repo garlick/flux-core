@@ -271,7 +271,12 @@ error:
 }
 
 static const struct flux_msg_handler_spec htab[] = {
-    { FLUX_MSGTYPE_REQUEST,  "connector-local.config-reload", reload_cb, 0 },
+    {
+        .typemask = FLUX_MSGTYPE_REQUEST,
+        .topic_glob = "connector-local.config-reload",
+        .cb = reload_cb,
+        .rolemask = 0
+    },
     FLUX_MSGHANDLER_TABLE_END,
 };
 
