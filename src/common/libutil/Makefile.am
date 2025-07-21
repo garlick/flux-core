@@ -7,6 +7,7 @@ AM_CFLAGS = \
 AM_LDFLAGS = \
 	$(CODE_COVERAGE_LIBS)
 
+
 AM_CPPFLAGS = \
 	$(CODE_COVERAGE_CPPFLAGS) \
 	-I$(top_srcdir) \
@@ -108,6 +109,11 @@ libutil_la_SOURCES = \
 	basename.h \
 	basename.c \
 	ansi_color.h
+
+libutil_la_LDFLAGS = \
+        $(AM_LDFLAGS) \
+        $(APPLE_CORESERVICES_FRAMEWORK) \
+        $(APPLE_SYSTEMCONFIGURATION_FRAMEWORK)
 
 TESTS = test_sha1.t \
 	test_sha256.t \
