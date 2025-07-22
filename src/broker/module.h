@@ -30,6 +30,11 @@ typedef int (mod_main_f)(flux_t *h, int argc, char *argv[]);
 typedef void (*modpoller_cb_f)(module_t *p, void *arg);
 typedef void (*module_status_cb_f)(module_t *p, int prev_status, void *arg);
 
+struct module_builtin {
+    const char *name;
+    mod_main_f *main;
+};
+
 module_t *module_create (flux_t *h,
                          const char *parent_uuid,
                          const char *name,
