@@ -16,14 +16,14 @@
 
 #include "src/common/libczmqcontainers/czmq_containers.h"
 #include "src/common/libutil/log.h"
-#include "src/common/libutil/dirwalk.h"
-#include "src/common/libutil/iterators.h"
 #include "src/common/libutil/errprintf.h"
 #include "src/common/libutil/errno_safe.h"
+#include "src/common/libutil/iterators.h"
 #include "ccan/str/str.h"
 #include "ccan/array_size/array_size.h"
 
 #include "module.h"
+#include "module_dso.h"
 #include "broker.h"
 #include "trace.h"
 #include "modhash.h"
@@ -85,7 +85,7 @@ static int module_insmod_respond (flux_t *h, module_t *p)
     int rc;
     int errnum = 0;
     int status = module_get_status (p);
-    const flux_msg_t *msg = module_pop_insmod (p);
+    const flux_msg_t *msg = module_aux_get (p, "insmod");
 
     if (msg == NULL)
         return 0;
@@ -99,18 +99,22 @@ static int module_insmod_respond (flux_t *h, module_t *p)
     else
         rc = flux_respond_error (h, msg, errnum, NULL);
 
-    flux_msg_decref (msg);
+    module_aux_set (p, "insmod", NULL, NULL);
     return rc;
 }
 
 static int module_rmmod_respond (flux_t *h, module_t *p)
 {
+    struct flux_msglist *msglist = module_aux_get (p, "rmmod");
     const flux_msg_t *msg;
     int rc = 0;
-    while ((msg = module_pop_rmmod (p))) {
-        if (flux_respond (h, msg, NULL) < 0)
-            rc = -1;
-        flux_msg_decref (msg);
+
+    if (msglist) {
+        while ((msg = flux_msglist_pop (msglist))) {
+            if (flux_respond (h, msg, NULL) < 0)
+                rc = -1;
+            flux_msg_decref (msg);
+        }
     }
     return rc;
 }
@@ -266,56 +270,21 @@ static int mod_svc_cb (flux_msg_t **msg, void *arg)
     return module_sendmsg_new (p, msg);
 }
 
-/* Load broker module.
- * 'name' is the name to use for the module (NULL = use dso basename minus ext)
- * 'path' is either a dso path or a dso basename (e.g. "kvs" or "/a/b/kvs.so".
+/* Perform the final steps of loading a broker module:
+ * - set status and message callbacks
+ * - register a service under the module name
+ * - start the module thread
+ * * insert the module object into the modhash
  */
-int modhash_load (modhash_t *mh,
-                  const char *name,
-                  const char *path,
-                  json_t *args,
-                  const flux_msg_t *request,
-                  flux_error_t *error)
+static int modhash_load_finalize (struct modhash *mh,
+                                  module_t *p,
+                                  flux_error_t *error)
 {
-    const char *searchpath;
-    char *pattern = NULL;
-    zlist_t *files = NULL;
-    module_t *p;
-
-    if (!strchr (path, '/')) {
-        if (!(searchpath = getenv ("FLUX_MODULE_PATH"))) {
-            errprintf (error, "FLUX_MODULE_PATH is not set in the environment");
-            errno = EINVAL;
-            return -1;
-        }
-        if (asprintf (&pattern, "%s.so*", path) < 0) {
-            errprintf (error, "out of memory");
-            return -1;
-        }
-        if (!(files = dirwalk_find (searchpath,
-                                    DIRWALK_REALPATH | DIRWALK_NORECURSE,
-                                    pattern,
-                                    1,
-                                    NULL,
-                                    NULL))
-            || zlist_size (files) == 0) {
-            errprintf (error, "module not found in search path");
-            errno = ENOENT;
-            goto error;
-        }
-        path = zlist_first (files);
-    }
-    if (!(p = module_create (mh->ctx->h,
-                             overlay_get_uuid (mh->ctx->overlay),
-                             name,
-                             path,
-                             mh->ctx->rank,
-                             args,
-                             error)))
-        goto error;
-    if (modhash_add (mh, p) < 0) {
-        module_destroy (p);
-        goto error;
+    module_set_poller_cb (p, module_cb, mh->ctx);
+    module_set_status_cb (p, module_status_cb, mh->ctx);
+    if (module_aux_set (p, "modhash", mh, NULL) < 0) {
+        errprintf (error, "error setting up %s module", module_get_name (p));
+        return -1;
     }
     if (service_add (mh->ctx->services,
                      module_get_name (p),
@@ -323,29 +292,116 @@ int modhash_load (modhash_t *mh,
                      mod_svc_cb,
                      p) < 0) {
         errprintf (error, "error registering %s service", module_get_name (p));
-        goto module_remove;
-    }
-    module_set_poller_cb (p, module_cb, mh->ctx);
-    module_set_status_cb (p, module_status_cb, mh->ctx);
-    if (request && module_push_insmod (p, request) < 0) { // response deferred
-        errprintf (error, "error saving %s request", module_get_name (p));
-        goto service_remove;
+        return -1;
     }
     if (module_start (p) < 0) {
         errprintf (error, "error starting %s module", module_get_name (p));
-        goto service_remove;
+        return -1;
     }
-    flux_log (mh->ctx->h, LOG_DEBUG, "insmod %s", module_get_name (p));
-    zlist_destroy (&files);
-    free (pattern);
+    modhash_add (mh, p);
+
     return 0;
-service_remove:
-    service_remove_byuuid (mh->ctx->services, module_get_uuid (p));
-module_remove:
-    modhash_remove (mh, p);
+}
+
+int modhash_load (modhash_t *mh,
+                  const char *name_or_null,
+                  const char *path_or_name,
+                  json_t *args,
+                  const flux_msg_t *request,
+                  flux_error_t *error)
+{
+    broker_ctx_t *ctx = mh->ctx;
+    const char *broker_uuid = overlay_get_uuid (ctx->overlay);
+    char *path = NULL;
+    char *name = NULL;
+    void *dso;
+    mod_main_f *mod_main;
+    module_t *p;
+
+    /* Handle 'flux module load /path/to/foo.dso' or 'flux module load foo'.
+     * In the latter case, search FLUX_MODULE_PATH for foo.dso.
+     */
+    if (strchr (path_or_name, '/')) {
+        if (!(path = strdup (path_or_name))) {
+            errprintf (error, "error duplicating module path");
+            return -1;
+        }
+    }
+    else {
+        const char *searchpath = getenv ("FLUX_MODULE_PATH");
+        if (!searchpath) {
+            errprintf (error, "FLUX_MODULE_PATH is not set in the environment");
+            errno = EINVAL;
+            return -1;
+        }
+        if (!(path = module_dso_search (path_or_name, searchpath, error)))
+            return -1;
+    }
+    /* If the name is not specified, derive it from the module path.
+     * E.g. the path '/path/to/foo.dso' suggests a module name of 'foo'.
+     * This doesn't have to be true if the name is specified.
+     */
+    if (name_or_null)
+        name = strdup (name_or_null);
+    else
+        name = module_dso_name (path);
+    if (!name) {
+        errprintf (error,
+                   "error duplicating module name: %s",
+                   strerror (errno));
+        ERRNO_SAFE_WRAP (free, path);
+        goto error;
+    }
+    /* Now open the DSO and obtain the mod_main() function pointer
+     * that will be called from a new module thread in module_start().
+     * The name is only passed to this function so the deprecated mod_name
+     * symbol can be sanity checked, if defined.
+     */
+    if (!(dso = module_dso_open (path, name, &mod_main, error))) {
+        ERRNO_SAFE_WRAP (free, path);
+        goto error;
+    }
+    /* Create the module object.
+     */
+    if (!(p = module_create (ctx->h,
+                             broker_uuid,
+                             name,
+                             mod_main,
+                             args,
+                             error))
+        || module_aux_set (p, NULL, dso, module_dso_close) < 0) {
+        module_dso_close (dso);
+        ERRNO_SAFE_WRAP (free, path);
+        goto error_module;
+    }
+    if (module_aux_set (p, "path", path, (flux_free_f)free) < 0) {
+        ERRNO_SAFE_WRAP (free, path);
+        goto error_module;
+    }
+    /* Push the insmod request onto the module.  A response will be generated
+     * from the module status callback, after the module is active.
+     */
+    if (request) {
+        if (module_aux_set (p,
+                            "insmod",
+                            (flux_msg_t *)request,
+                            (flux_free_f)flux_msg_decref) < 0) {
+            errprintf (error, "error saving %s request", module_get_name (p));
+            goto error_module;
+        }
+        flux_msg_incref (request);
+    }
+    /*  Register service, start module thread, and insert into modhash.
+     */
+    if (modhash_load_finalize (ctx->modhash, p, error) < 0)
+        goto error_module;
+    flux_log (ctx->h, LOG_DEBUG, "insmod %s", module_get_name (p));
+    free (name);
+    return 0;
+error_module:
+    module_destroy (p);
 error:
-    ERRNO_SAFE_WRAP (zlist_destroy, &files);
-    ERRNO_SAFE_WRAP (free, pattern);
+    ERRNO_SAFE_WRAP (free, name);
     return -1;
 }
 
@@ -381,7 +437,6 @@ error:
         flux_log_error (h, "%s: flux_respond_error", __FUNCTION__);
 }
 
-
 static int unload_module (broker_ctx_t *ctx,
                           const char *name,
                           bool cancel,
@@ -404,7 +459,18 @@ static int unload_module (broker_ctx_t *ctx,
         if (module_stop (p, ctx->h) < 0)
             return -1;
     }
-    if (module_push_rmmod (p, request) < 0)
+    struct flux_msglist *requests = module_aux_get (p, "rmmod");
+    if (!requests) {
+        if (!(requests = flux_msglist_create ())
+            || module_aux_set (p,
+                               "rmmod",
+                               requests,
+                               (flux_free_f)flux_msglist_destroy) < 0) {
+            flux_msglist_destroy (requests);
+            return -1;
+        }
+    }
+    if (flux_msglist_push (requests, request) < 0)
         return -1;
     flux_log (ctx->h, LOG_DEBUG, "rmmod %s", name);
     return 0;
@@ -684,7 +750,7 @@ static json_t *modhash_entry_tojson (module_t *p,
         return NULL;
     entry = json_pack ("{s:s s:s s:i s:i s:O s:i s:i}",
                        "name", module_get_name (p),
-                       "path", module_get_path (p),
+                       "path", module_aux_get (p, "path"),
                        "idle", (int)(now - module_get_lastseen (p)),
                        "status", module_get_status (p),
                        "services", svcs,
@@ -740,7 +806,7 @@ module_t *modhash_lookup_byname (modhash_t *mh, const char *name)
         module_t *p = zhash_first (mh->zh_byuuid);
         while (p) {
             if (streq (module_get_name (p), name)
-                || streq (module_get_path (p), name))
+                || streq (module_aux_get (p, "path"), name))
                 return p;
             p = zhash_next (mh->zh_byuuid);
         }

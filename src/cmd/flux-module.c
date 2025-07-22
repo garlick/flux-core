@@ -43,6 +43,7 @@
 #include "src/common/libutil/jpath.h"
 #include "src/common/libutil/ansi_color.h"
 #include "src/common/libutil/parse_size.h"
+#include "src/broker/module.h"
 #include "ccan/str/str.h"
 #include "ccan/array_size/array_size.h"
 
