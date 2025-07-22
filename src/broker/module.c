@@ -11,7 +11,6 @@
 #if HAVE_CONFIG_H
 #include "config.h"
 #endif
-#include <dlfcn.h>
 #ifdef HAVE_ARGZ_ADD
 #include <argz.h>
 #else
@@ -54,7 +53,6 @@ struct broker_module {
     uuid_t uuid;            /* uuid for unique request sender identity */
     char uuid_str[UUID_STR_LEN];
     char *parent_uuid_str;
-    int rank;
     json_t *attr_cache;     /* attrs to be cached in module flux_t */
     flux_conf_t *conf;
     pthread_t t;            /* module thread */
@@ -63,7 +61,6 @@ struct broker_module {
     int mod_main_errno;
     char *name;
     char *path;             /* retain the full path as a key for lookup */
-    void *dso;              /* reference on dlopened module */
     int argc;
     char **argv;
     size_t argz_len;
@@ -80,8 +77,6 @@ struct broker_module {
 
     struct disconnect *disconnect;
 
-    struct flux_msglist *rmmod_requests;
-    struct flux_msglist *insmod_requests;
     struct flux_msglist *deferred_messages;
 
     flux_t *h_module_end;   /* module end of interthread_channel */
@@ -300,49 +295,20 @@ static void module_cb (flux_reactor_t *r,
         p->poller_cb (p, p->poller_arg);
 }
 
-static char *module_name_from_path (const char *path)
-{
-    char *name;
-    char *cp;
-
-    name = basename_simple (path);
-    // if path ends in .so or .so.VERSION, strip it off
-    if ((cp = strstr (name, ".so")))
-        return strndup (name, cp - name);
-    return strdup (name);
-}
-
 module_t *module_create (flux_t *h,
                          const char *parent_uuid,
                          const char *name, // may be NULL
                          const char *path,
-                         int rank,
+                         mod_main_f *mod_main,
                          json_t *args,
                          flux_error_t *error)
 {
     flux_reactor_t *r = flux_get_reactor (h);
     module_t *p;
-    void *dso;
-    const char **mod_namep;
-    mod_main_f *mod_main;
 
-    dlerror ();
-    if (!(dso = dlopen (path, RTLD_NOW | RTLD_GLOBAL | plugin_deepbind ()))) {
-        errprintf (error, "%s", dlerror ());
-        errno = ENOENT;
-        return NULL;
-    }
-    if (!(mod_main = dlsym (dso, "mod_main"))) {
-        errprintf (error, "module does not define mod_main()");
-        dlclose (dso);
-        errno = EINVAL;
-        return NULL;
-    }
     if (!(p = calloc (1, sizeof (*p))))
         goto nomem;
     p->main = mod_main;
-    p->dso = dso;
-    p->rank = rank;
     p->h = h;
     if (!(p->conf = flux_conf_copy (flux_get_conf (h))))
         goto cleanup;
@@ -363,31 +329,13 @@ module_t *module_create (flux_t *h,
     if (!(p->argv = calloc (1, sizeof (p->argv[0]) * (p->argc + 1))))
         goto nomem;
     argz_extract (p->argz, p->argz_len, p->argv);
-    if (!(p->path = strdup (path))
-        || !(p->rmmod_requests = flux_msglist_create ())
-        || !(p->insmod_requests = flux_msglist_create ()))
+    if (!(p->path = strdup (path)))
         goto nomem;
-    if (name) {
-        if (!(p->name = strdup (name)))
-            goto nomem;
-    }
-    else {
-        if (!(p->name = module_name_from_path (path)))
-            goto nomem;
-    }
+    if (!(p->name = strdup (name)))
+        goto nomem;
     if (!(p->sub = subhash_create ())) {
         errprintf (error, "error creating subscription hash");
         goto cleanup;
-    }
-    /* Handle legacy 'mod_name' symbol - not recommended for new modules
-     * but double check that it's sane if present.
-     */
-    if ((mod_namep = dlsym (p->dso, "mod_name")) && *mod_namep != NULL) {
-        if (!streq (*mod_namep, p->name)) {
-            errprintf (error, "mod_name %s != name %s", *mod_namep, name);
-            errno = EINVAL;
-            goto cleanup;
-        }
     }
     uuid_generate (p->uuid);
     uuid_unparse (p->uuid, p->uuid_str);
@@ -557,9 +505,6 @@ void module_destroy (module_t *p)
     flux_watcher_destroy (p->broker_w);
     flux_close (p->h_broker_end);
 
-#ifndef __SANITIZE_ADDRESS__
-    dlclose (p->dso);
-#endif
     free (p->argv);
     free (p->argz);
     free (p->name);
@@ -567,8 +512,6 @@ void module_destroy (module_t *p)
     free (p->parent_uuid_str);
     flux_conf_decref (p->conf);
     json_decref (p->attr_cache);
-    flux_msglist_destroy (p->rmmod_requests);
-    flux_msglist_destroy (p->insmod_requests);
     flux_msglist_destroy (p->deferred_messages);
     subhash_destroy (p->sub);
     aux_destroy (&p->aux);
@@ -681,32 +624,6 @@ void module_set_errnum (module_t *p, int errnum)
 int module_get_errnum (module_t *p)
 {
     return p->errnum;
-}
-
-int module_push_rmmod (module_t *p, const flux_msg_t *msg)
-{
-    return flux_msglist_push (p->rmmod_requests, msg);
-}
-
-const flux_msg_t *module_pop_rmmod (module_t *p)
-{
-    return flux_msglist_pop (p->rmmod_requests);
-}
-
-/* There can be only one insmod request.
- */
-int module_push_insmod (module_t *p, const flux_msg_t *msg)
-{
-    if (flux_msglist_count (p->insmod_requests) > 0) {
-        errno = EEXIST;
-        return -1;
-    }
-    return flux_msglist_push (p->insmod_requests, msg);
-}
-
-const flux_msg_t *module_pop_insmod (module_t *p)
-{
-    return flux_msglist_pop (p->insmod_requests);
 }
 
 int module_subscribe (module_t *p, const char *topic)

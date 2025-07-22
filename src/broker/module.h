@@ -22,9 +22,9 @@ typedef void (*module_status_cb_f)(module_t *p, int prev_status, void *arg);
 
 module_t *module_create (flux_t *h,
                          const char *parent_uuid,
-                         const char *name, // may be NULL
+                         const char *name,
                          const char *path,
-                         int rank,
+                         mod_main_f *mod_main,
                          json_t *args,
                          flux_error_t *error);
 void module_destroy (module_t *p);
@@ -62,11 +62,6 @@ int module_disconnect_arm (module_t *p,
                            const flux_msg_t *msg,
                            disconnect_send_f cb,
                            void *arg);
-
-int module_push_rmmod (module_t *p, const flux_msg_t *msg);
-const flux_msg_t *module_pop_rmmod (module_t *p);
-int module_push_insmod (module_t *p, const flux_msg_t *msg);
-const flux_msg_t *module_pop_insmod (module_t *p);
 
 /* Get/set module status.
  */
