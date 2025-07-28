@@ -130,6 +130,9 @@ jobs:
       run: make check -j4 TESTS=
     - name: check what works so far
       run: scripts/check-macos.sh
+    - name: setup tmate session
+      if: failure()
+      uses: mxschmitt/action-tmate@v3
 
   generate-matrix:
     # https://stackoverflow.com/questions/59977364

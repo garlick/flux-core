@@ -28,7 +28,10 @@ brew install \
   python3 \
   cffi \
   libyaml \
-  jq
+  jq \
+  tmux \
+  reattach-to-user-namespace \
+  tmate
 
 python3 -m venv macos-venv
 source macos-venv/bin/activate
