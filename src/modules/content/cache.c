@@ -1069,7 +1069,7 @@ static int parse_u32 (const char *s, uint32_t *val)
     return 0;
 }
 
-int parse_args (struct content_cache *cache, int argc, char **argv)
+static int parse_args (struct content_cache *cache, int argc, char **argv)
 {
     uint32_t val;
 

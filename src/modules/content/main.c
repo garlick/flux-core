@@ -16,9 +16,10 @@
 #endif
 #include <flux/core.h>
 
+#include "src/broker/module.h"
 #include "cache.h"
 
-int mod_main (flux_t *h, int argc, char **argv)
+static int mod_main (flux_t *h, int argc, char **argv)
 {
     struct content_cache *cache;
     int rc = -1;
@@ -36,5 +37,11 @@ done:
     content_cache_destroy (cache);
     return rc;
 }
+
+struct module_builtin builtin_content = {
+    .name = "content",
+    .main = mod_main,
+    .autoload = false,
+};
 
 // vi:ts=4 sw=4 expandtab

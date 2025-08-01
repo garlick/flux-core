@@ -28,12 +28,20 @@ noinst_LTLIBRARIES = libmodule_builtins.la
 libmodule_builtins_la_SOURCES = \
 	connector-local/local.c \
 	barrier/barrier.c \
-	heartbeat/heartbeat.c
-libmodule_builtins_la_LIBADD =
+	heartbeat/heartbeat.c \
+	content/main.c \
+	content/cache.c \
+	content/cache.h \
+	content/mmap.c \
+	content/mmap.h \
+	content/checkpoint.c \
+	content/checkpoint.h
+libmodule_builtins_la_LIBADD = \
+	$(top_builddir)/src/common/libfilemap/libfilemap.la \
+	$(LIBARCHIVE_LIBS)
 libmodule_builtins_la_LDFLAGS = $(san_ld_zdef_flag)
 
 fluxmod_LTLIBRARIES = \
-	content.la \
 	content-files.la \
 	content-sqlite.la \
 	cron.la \
@@ -53,21 +61,6 @@ fluxmod_LTLIBRARIES = \
 # N.B. SOURCES should be empty when module subdir is listed in
 # SUBDIRS above.  This avoids distcheck problems with older automake.
 # Hint: build convenience library in subdir and reference that in LIBADD.
-
-content_la_SOURCES = \
-	content/main.c \
-	content/cache.c \
-	content/cache.h \
-	content/mmap.c \
-	content/mmap.h \
-	content/checkpoint.c \
-	content/checkpoint.h
-content_la_LIBADD = \
-	$(top_builddir)/src/common/libfilemap/libfilemap.la \
-	$(top_builddir)/src/common/libflux-internal.la \
-	$(top_builddir)/src/common/libflux-core.la \
-	$(LIBARCHIVE_LIBS)
-content_la_LDFLAGS = $(fluxmod_ldflags) -module
 
 content_files_la_SOURCES =
 content_files_la_LIBADD = \
