@@ -35,7 +35,8 @@ libmodule_builtins_la_SOURCES = \
 	content/mmap.c \
 	content/mmap.h \
 	content/checkpoint.c \
-	content/checkpoint.h
+	content/checkpoint.h \
+	kvs-watch/kvs-watch.c
 libmodule_builtins_la_LIBADD = \
 	$(top_builddir)/src/common/libfilemap/libfilemap.la \
 	$(LIBARCHIVE_LIBS)
@@ -51,7 +52,6 @@ fluxmod_LTLIBRARIES = \
 	job-ingest.la \
 	job-manager.la \
 	kvs.la \
-	kvs-watch.la \
 	resource.la \
 	sched-simple.la \
 	sdmon.la \
@@ -189,16 +189,6 @@ kvs_la_LIBADD = \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(JANSSON_LIBS)
 kvs_la_LDFLAGS = $(fluxmod_ldflags) -module
-
-kvs_watch_la_SOURCES = \
-	kvs-watch/kvs-watch.c
-kvs_watch_la_LIBADD = \
-	$(top_builddir)/src/common/libkvs/libkvs.la \
-	$(top_builddir)/src/common/libflux-internal.la \
-	$(top_builddir)/src/common/libflux-core.la \
-	$(top_builddir)/src/common/libflux-optparse.la \
-	$(JANSSON_LIBS)
-kvs_watch_la_LDFLAGS = $(fluxmod_ldflags) -module
 
 resource_la_SOURCES =
 resource_la_CPPFLAGS = \

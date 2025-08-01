@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <flux/core.h>
 
+#include "src/broker/module.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
 #include "src/common/libkvs/treeobj.h"
 #include "src/common/libkvs/kvs_util_private.h"
@@ -1645,7 +1646,7 @@ error:
     return NULL;
 }
 
-int mod_main (flux_t *h, int argc, char **argv)
+static int mod_main (flux_t *h, int argc, char **argv)
 {
     struct watch_ctx *ctx;
     int rc = -1;
@@ -1661,6 +1662,12 @@ done:
     watch_ctx_destroy (ctx);
     return rc;
 }
+
+struct module_builtin builtin_kvs_watch = {
+    .name = "kvs-watch",
+    .main = mod_main,
+    .autoload = false,
+};
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab

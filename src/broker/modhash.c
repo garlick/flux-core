@@ -41,6 +41,7 @@ extern struct module_builtin builtin_connector_local;
 extern struct module_builtin builtin_barrier;
 extern struct module_builtin builtin_heartbeat;
 extern struct module_builtin builtin_content;
+extern struct module_builtin builtin_kvs_watch;
 
 /* Builtin modules with autoload=true are loaded in this order and
  * unloaded in the reverse order.
@@ -50,6 +51,7 @@ static struct module_builtin *builtins[] = {
     &builtin_barrier,
     &builtin_heartbeat,
     &builtin_content,
+    &builtin_kvs_watch,
 };
 
 static json_t *modhash_get_modlist (modhash_t *mh,
