@@ -21,6 +21,7 @@
 #include <flux/security/sign.h>
 #endif
 
+#include "src/broker/module.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
 #include "src/common/libutil/fluid.h"
 #include "src/common/libutil/jpath.h"
@@ -537,7 +538,7 @@ static int ingest_add_job (struct job_ingest_ctx *ctx, struct job *job)
     return 0;
 }
 
-void pipeline_continuation (flux_future_t *f, void *arg)
+static void pipeline_continuation (flux_future_t *f, void *arg)
 {
     struct job *job = arg;
     struct job_ingest_ctx *ctx = flux_future_aux_get (f, "ctx");
@@ -811,10 +812,10 @@ static const struct flux_msg_handler_spec htab[] = {
     FLUX_MSGHANDLER_TABLE_END,
 };
 
-int job_ingest_ctx_init (struct job_ingest_ctx *ctx,
-                         flux_t *h,
-                         int argc,
-                         char **argv)
+static int job_ingest_ctx_init (struct job_ingest_ctx *ctx,
+                                flux_t *h,
+                                int argc,
+                                char **argv)
 {
     flux_reactor_t *r = flux_get_reactor (h);
     memset (ctx, 0, sizeof (*ctx));
@@ -858,7 +859,7 @@ int job_ingest_ctx_init (struct job_ingest_ctx *ctx,
     return 0;
 }
 
-int mod_main (flux_t *h, int argc, char **argv)
+static int mod_main (flux_t *h, int argc, char **argv)
 {
     flux_reactor_t *r = flux_get_reactor (h);
     int rc = -1;
@@ -951,6 +952,12 @@ done:
     pipeline_destroy (ctx.pipeline);
     return rc;
 }
+
+struct module_builtin builtin_job_ingest = {
+    .name = "job-ingest",
+    .main = mod_main,
+    .autoload = false,
+};
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab

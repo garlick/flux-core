@@ -12,7 +12,8 @@ AM_CPPFLAGS = \
 	-I$(top_builddir)/src/common/libflux \
 	-I$(top_srcdir)/src/common/libccan \
 	$(JANSSON_CFLAGS) \
-	$(FLUX_SECURITY_CFLAGS)
+	$(FLUX_SECURITY_CFLAGS) \
+	$(HWLOC_CFLAGS)
 
 SUBDIRS = \
 	kvs \
@@ -53,9 +54,12 @@ libmodule_builtins_la_SOURCES = \
 	job-info/util.h \
 	job-info/util.c
 libmodule_builtins_la_LIBADD = \
+	$(builddir)/job-ingest/libingest.la \
 	$(top_builddir)/src/common/libfilemap/libfilemap.la \
 	$(top_builddir)/src/common/libjob/libjob.la \
-	$(LIBARCHIVE_LIBS)
+	$(LIBARCHIVE_LIBS) \
+	$(JANSSON_LIBS) \
+	$(FLUX_SECURITY_LIBS)
 libmodule_builtins_la_LDFLAGS = $(san_ld_zdef_flag)
 
 fluxmod_LTLIBRARIES = \
@@ -64,7 +68,6 @@ fluxmod_LTLIBRARIES = \
 	cron.la \
 	job-exec.la \
 	job-list.la \
-	job-ingest.la \
 	job-manager.la \
 	kvs.la \
 	resource.la \
@@ -138,20 +141,6 @@ job_list_la_LIBADD = \
 	$(top_builddir)/src/common/librlist/librlist.la \
 	$(JANSSON_LIBS)
 job_list_la_LDFLAGS = $(fluxmod_ldflags) -module
-
-job_ingest_la_SOURCES =
-job_ingest_la_CPPFLAGS = \
-	$(AM_CPPFLAGS) \
-	$(HWLOC_CFLAGS)
-job_ingest_la_LIBADD = \
-	$(builddir)/job-ingest/libingest.la \
-	$(top_builddir)/src/common/libjob/libjob.la \
-	$(top_builddir)/src/common/libflux-internal.la \
-	$(top_builddir)/src/common/libflux-core.la \
-	$(top_builddir)/src/common/libflux-optparse.la \
-	$(JANSSON_LIBS) \
-	$(FLUX_SECURITY_LIBS)
-job_ingest_la_LDFLAGS = $(fluxmod_ldflags) -module
 
 job_manager_la_SOURCES =
 job_manager_la_LIBADD = \
