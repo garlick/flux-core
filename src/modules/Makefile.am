@@ -55,11 +55,16 @@ libmodule_builtins_la_SOURCES = \
 	job-info/util.c
 libmodule_builtins_la_LIBADD = \
 	$(builddir)/job-ingest/libingest.la \
+	$(builddir)/resource/libresource.la \
+	$(top_builddir)/src/common/libkvs/libkvs.la \
 	$(top_builddir)/src/common/libfilemap/libfilemap.la \
 	$(top_builddir)/src/common/libjob/libjob.la \
+	$(top_builddir)/src/common/librlist/librlist-hwloc.la \
+	$(top_builddir)/src/common/librlist/librlist.la \
 	$(LIBARCHIVE_LIBS) \
 	$(JANSSON_LIBS) \
-	$(FLUX_SECURITY_LIBS)
+	$(FLUX_SECURITY_LIBS) \
+	$(HWLOC_LIBS)
 libmodule_builtins_la_LDFLAGS = $(san_ld_zdef_flag)
 
 fluxmod_LTLIBRARIES = \
@@ -70,7 +75,6 @@ fluxmod_LTLIBRARIES = \
 	job-list.la \
 	job-manager.la \
 	kvs.la \
-	resource.la \
 	sched-simple.la \
 	sdmon.la \
 	sdexec.la \
@@ -168,20 +172,6 @@ kvs_la_LIBADD = \
 	$(top_builddir)/src/common/libflux-core.la \
 	$(JANSSON_LIBS)
 kvs_la_LDFLAGS = $(fluxmod_ldflags) -module
-
-resource_la_SOURCES =
-resource_la_CPPFLAGS = \
-	$(AM_CPPFLAGS) \
-	$(HWLOC_CFLAGS)
-resource_la_LIBADD = \
-	$(builddir)/resource/libresource.la \
-	$(top_builddir)/src/common/librlist/librlist-hwloc.la \
-	$(top_builddir)/src/common/librlist/librlist.la \
-	$(top_builddir)/src/common/libflux-internal.la \
-	$(top_builddir)/src/common/libflux-core.la \
-	$(JANSSON_LIBS) \
-	$(HWLOC_LIBS)
-resource_la_LDFLAGS = $(fluxmod_ldflags) -module
 
 sched_simple_la_SOURCES = \
 	sched-simple/sched.c

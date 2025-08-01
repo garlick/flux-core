@@ -18,6 +18,7 @@
 #include <flux/core.h>
 #include <jansson.h>
 
+#include "src/broker/module.h"
 #include "src/common/libutil/errno_safe.h"
 #include "src/common/libutil/errprintf.h"
 #include "src/common/libidset/idset.h"
@@ -326,9 +327,9 @@ error:
     return -1;
 }
 
-int parse_args (flux_t *h, int argc,
-                char **argv,
-                struct resource_config *config)
+static int parse_args (flux_t *h, int argc,
+                       char **argv,
+                       struct resource_config *config)
 {
     int i;
     for (i = 0; i < argc; i++) {
@@ -349,7 +350,7 @@ int parse_args (flux_t *h, int argc,
 }
 
 
-int mod_main (flux_t *h, int argc, char **argv)
+static int mod_main (flux_t *h, int argc, char **argv)
 {
     struct resource_ctx *ctx;
     flux_error_t error;
@@ -432,6 +433,12 @@ error:
     ERRNO_SAFE_WRAP (json_decref, config.R);
     return -1;
 }
+
+struct module_builtin builtin_resource = {
+    .name = "resource",
+    .main = mod_main,
+    .autoload = false,
+};
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
