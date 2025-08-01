@@ -11,7 +11,8 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/include \
 	-I$(top_builddir)/src/common/libflux \
 	-I$(top_srcdir)/src/common/libccan \
-	$(JANSSON_CFLAGS)
+	$(JANSSON_CFLAGS) \
+	$(FLUX_SECURITY_CFLAGS)
 
 SUBDIRS = \
 	kvs \
@@ -36,9 +37,24 @@ libmodule_builtins_la_SOURCES = \
 	content/mmap.h \
 	content/checkpoint.c \
 	content/checkpoint.h \
-	kvs-watch/kvs-watch.c
+	kvs-watch/kvs-watch.c \
+	job-info/job-info.h \
+	job-info/job-info.c \
+	job-info/allow.h \
+	job-info/allow.c \
+	job-info/lookup.h \
+	job-info/lookup.c \
+	job-info/watch.h \
+	job-info/watch.c \
+	job-info/guest_watch.h \
+	job-info/guest_watch.c \
+	job-info/update.h \
+	job-info/update.c \
+	job-info/util.h \
+	job-info/util.c
 libmodule_builtins_la_LIBADD = \
 	$(top_builddir)/src/common/libfilemap/libfilemap.la \
+	$(top_builddir)/src/common/libjob/libjob.la \
 	$(LIBARCHIVE_LIBS)
 libmodule_builtins_la_LDFLAGS = $(san_ld_zdef_flag)
 
@@ -47,7 +63,6 @@ fluxmod_LTLIBRARIES = \
 	content-sqlite.la \
 	cron.la \
 	job-exec.la \
-	job-info.la \
 	job-list.la \
 	job-ingest.la \
 	job-manager.la \
@@ -108,31 +123,6 @@ job_exec_la_LIBADD = \
 	$(top_builddir)/src/common/libflux/libflux.la \
 	$(JANSSON_LIBS)
 job_exec_la_LDFLAGS = $(fluxmod_ldflags) -module
-
-job_info_la_SOURCES = \
-	job-info/job-info.h \
-	job-info/job-info.c \
-	job-info/allow.h \
-	job-info/allow.c \
-	job-info/lookup.h \
-	job-info/lookup.c \
-	job-info/watch.h \
-	job-info/watch.c \
-	job-info/guest_watch.h \
-	job-info/guest_watch.c \
-	job-info/update.h \
-	job-info/update.c \
-	job-info/util.h \
-	job-info/util.c
-job_info_la_CPPFLAGS = \
-	$(AM_CPPFLAGS) \
-	$(FLUX_SECURITY_CFLAGS)
-job_info_la_LIBADD = \
-	$(top_builddir)/src/common/libflux-internal.la \
-	$(top_builddir)/src/common/libflux-core.la \
-	$(top_builddir)/src/common/libjob/libjob.la \
-	$(JANSSON_LIBS)
-job_info_la_LDFLAGS = $(fluxmod_ldflags) -module
 
 job_list_la_SOURCES =
 job_list_la_CPPFLAGS = \

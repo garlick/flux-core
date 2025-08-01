@@ -13,6 +13,7 @@
 #endif
 #include <flux/core.h>
 
+#include "src/broker/module.h"
 #include "src/common/libczmqcontainers/czmq_containers.h"
 
 #include "job-info.h"
@@ -146,7 +147,7 @@ error:
     return NULL;
 }
 
-int mod_main (flux_t *h, int argc, char **argv)
+static int mod_main (flux_t *h, int argc, char **argv)
 {
     struct info_ctx *ctx;
     int rc = -1;
@@ -162,6 +163,12 @@ done:
     info_ctx_destroy (ctx);
     return rc;
 }
+
+struct module_builtin builtin_job_info = {
+    .name = "job-info",
+    .main = mod_main,
+    .autoload = false,
+};
 
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
