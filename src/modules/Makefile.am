@@ -37,6 +37,7 @@ fluxmod_LTLIBRARIES = \
 	content-sqlite.la \
 	cron.la \
 	heartbeat.la \
+	scratchpad.la
 	job-exec.la \
 	job-info.la \
 	job-list.la \
@@ -111,6 +112,13 @@ heartbeat_la_LIBADD = \
 	$(top_builddir)/src/common/libflux-internal.la \
 	$(top_builddir)/src/common/libflux-core.la
 heartbeat_la_LDFLAGS = $(fluxmod_ldflags) -module
+
+scratchpad_la_SOURCES = \
+	scratchpad/scratchpad.c
+scratchpad_la_LIBADD = \
+	$(top_builddir)/src/common/libflux-internal.la \
+	$(top_builddir)/src/common/libflux-core.la
+scratchpad_la_LDFLAGS = $(fluxmod_ldflags) -module
 
 job_exec_la_SOURCES =
 job_exec_la_LIBADD = \
