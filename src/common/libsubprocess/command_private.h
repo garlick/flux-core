@@ -22,11 +22,6 @@
  *  Internal only flux_cmd_t interfaces
  */
 
-struct cmd_msgchan {
-    char *uri;
-    char *name;
-};
-
 /*
  *  Return JSON representation of command object `cmd`
  */
@@ -57,12 +52,12 @@ int cmd_set_env (flux_cmd_t *cmd, char **env);
 /*
  *  Return list of channels.  Should not be destroyed by caller.
  */
-zlist_t *cmd_channel_list (flux_cmd_t *cmd);
+json_t *cmd_get_channels (flux_cmd_t *cmd);
 
 /*
- *  Return list of 'struct cmd_msgchan' objects.  Do not destroy.
+ *  Return list of message channel objects.  Do not destroy.
  */
-zlist_t *cmd_msgchan_list (flux_cmd_t *cmd);
+json_t *cmd_get_msgchans (flux_cmd_t *cmd);
 
 /*
  * Find opts that contain a specific substring.  Returns 1 if

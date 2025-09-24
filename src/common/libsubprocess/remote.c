@@ -374,24 +374,24 @@ static int remote_setup_stdio (flux_subprocess_t *p)
 
 static int remote_setup_channels (flux_subprocess_t *p)
 {
-    zlist_t *channels = cmd_channel_list (p->cmd);
-    const char *name;
+    json_t *channels = cmd_get_channels (p->cmd);
     int channel_flags = CHANNEL_READ | CHANNEL_WRITE | CHANNEL_FD;
+    size_t index;
+    json_t *entry;
 
-    if (zlist_size (channels) == 0)
+    if (json_array_size (channels) == 0)
         return 0;
 
     if (!p->ops.on_channel_out)
         channel_flags &= ~CHANNEL_READ;
 
-    name = zlist_first (channels);
-    while (name) {
+    json_array_foreach (channels, index, entry) {
+        const char *name = json_string_value (entry);
         if (remote_channel_setup (p,
                                   p->ops.on_channel_out,
                                   name,
                                   channel_flags) < 0)
             return -1;
-        name = zlist_next (channels);
     }
 
     return 0;
@@ -581,7 +581,7 @@ int remote_exec (flux_subprocess_t *p)
     flux_future_t *f;
     int flags = 0;
 
-    if (zlist_size (cmd_channel_list (p->cmd)) > 0)
+    if (json_array_size (cmd_get_channels (p->cmd)) > 0)
         flags |= SUBPROCESS_REXEC_CHANNEL;
     if (p->ops.on_stdout)
         flags |= SUBPROCESS_REXEC_STDOUT;

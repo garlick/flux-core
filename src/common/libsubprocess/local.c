@@ -413,18 +413,19 @@ static int local_setup_stdio (flux_subprocess_t *p)
 
 static int local_setup_channels (flux_subprocess_t *p)
 {
-    zlist_t *channels = cmd_channel_list (p->cmd);
-    const char *name;
+    json_t *channels = cmd_get_channels (p->cmd);
     int channel_flags = CHANNEL_READ | CHANNEL_WRITE | CHANNEL_FD;
+    size_t index;
+    json_t *entry;
 
-    if (zlist_size (channels) == 0)
+    if (json_array_size (channels) == 0)
         return 0;
 
     if (!p->ops.on_channel_out)
         channel_flags &= ~CHANNEL_READ;
 
-    name = zlist_first (channels);
-    while (name) {
+    json_array_foreach (channels, index, entry) {
+        const char *name = json_string_value (entry);
         if (channel_local_setup (p,
                                  p->ops.on_channel_out,
                                  local_in_cb,
@@ -432,7 +433,6 @@ static int local_setup_channels (flux_subprocess_t *p)
                                  name,
                                  channel_flags) < 0)
             return -1;
-        name = zlist_next (channels);
     }
 
     return 0;
@@ -440,38 +440,44 @@ static int local_setup_channels (flux_subprocess_t *p)
 
 static int local_setup_msgchans (flux_subprocess_t *p)
 {
-    struct cmd_msgchan *info;
-    zlist_t *msgchans = cmd_msgchan_list (p->cmd);
+    json_t *msgchans = cmd_get_msgchans (p->cmd);
+    size_t index;
+    json_t *entry;
 
-    info = zlist_first (msgchans);
-    while (info) {
-        flux_error_t error;
-        struct msgchan *mch;
-        if (!(mch = msgchan_create (p->reactor, info->uri, &error))) {
-            llog_error (p,
-                        "message channel %s: %s",
-                        info->name,
-                        error.text);
+    json_array_foreach (msgchans, index, entry) {
+        const char *name;
+        const char *uri;
+        if (json_unpack (entry,
+                         "{s:s s:s}",
+                         "name", &name,
+                         "uri", &uri) < 0) {
+            llog_error (p, "error unpacking message channels");
+            errno = EINVAL;
             return -1;
         }
-        if (zhash_insert (p->msgchans, info->name, mch) < 0
+        flux_error_t error;
+        struct msgchan *mch;
+        if (!(mch = msgchan_create (p->reactor, uri, &error))) {
+            llog_error (p, "message channel %s: %s", name, error.text);
+            return -1;
+        }
+        if (zhash_insert (p->msgchans, name, mch) < 0
             || !zhash_freefn (p->msgchans,
-                              info->name,
+                              name,
                               (zhash_free_fn *)msgchan_destroy)) {
             msgchan_destroy (mch);
-            llog_error (p, "message channel %s: duplicate name", info->name);
+            llog_error (p, "message channel %s: duplicate name", name);
             errno = EEXIST;
             return -1;
         }
         if (flux_cmd_setenvf (p->cmd,
                               1,
-                              info->name,
+                              name,
                               "%s",
                               msgchan_get_uri (mch)) < 0) {
-            llog_error (p, "message channel %s: setenv error", info->name);
+            llog_error (p, "message channel %s: setenv error", name);
             return -1;
         }
-        info = zlist_next (msgchans);
     }
     return 0;
 }
