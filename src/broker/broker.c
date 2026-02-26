@@ -1529,6 +1529,7 @@ static const struct flux_msg_handler_spec htab[] = {
         broker_setenv_cb,
         0
     },
+    {
         FLUX_MSGTYPE_REQUEST,
         "broker.disconnect",
         broker_disconnect_cb,
