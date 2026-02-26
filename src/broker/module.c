@@ -711,6 +711,20 @@ pid_t module_get_pid (module_t *p)
     return flux_subprocess_pid (p->exec.p);
 }
 
+char *module_name_frompath (const char *path)
+{
+    const char *name;
+    const char *cp;
+
+    name = basename_simple (path);
+    if (!(cp = strchr (name, '.')) || strlen (cp) == 1) {
+        errno = EINVAL;
+        return NULL;
+    }
+    return strndup (name, cp - name);
+}
+
+
 /*
  * vi:tabstop=4 shiftwidth=4 expandtab
  */
