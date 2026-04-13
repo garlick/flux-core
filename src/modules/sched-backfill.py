@@ -68,6 +68,7 @@ class BackfillScheduler(Scheduler):
       - :meth:`_try_alloc`        — attempt a real allocation, handling exceptions
       - :meth:`_shadow_time`      — compute head job's reservation time via simulation
       - :meth:`_annotate_pending` — send ``t_estimate`` annotation to the head job
+      - :meth:`stats_get`         — extend base stats with backfill-specific counters
     """
 
     def __init__(self, h, *args):
@@ -79,6 +80,10 @@ class BackfillScheduler(Scheduler):
         # job does not mutate the pool and therefore does not invalidate it.
         self._shadow_cache_key = None
         self._shadow_cache_value = None
+        self._backfill_count = 0
+        self._shadow_hits = 0
+        self._shadow_computed = 0
+        self._current_shadow = None
 
     # ------------------------------------------------------------------
     # Scheduler overrides
@@ -192,7 +197,9 @@ class BackfillScheduler(Scheduler):
         """
         key = (self.resources.generation, head.jobid)
         if self._shadow_cache_key == key:
+            self._shadow_hits += 1
             return self._shadow_cache_value
+        self._shadow_computed += 1
 
         sim = self.resources.copy()
         rr = head.resource_request
@@ -247,12 +254,14 @@ class BackfillScheduler(Scheduler):
                 job.request.annotate({"sched": {"t_estimate": None}})
 
         if self._try_alloc(head):
+            self._current_shadow = None
             heapq.heappop(self._queue)
             yield from self.schedule()  # chain generator so reactor stays live during recursion
             return
 
         # Head is blocked — compute its shadow time (EASY reservation).
         shadow = self._shadow_time(head)
+        self._current_shadow = shadow
         now = time.time()
 
         kept = [head]
@@ -263,6 +272,7 @@ class BackfillScheduler(Scheduler):
                 shadow is not None and duration > 0.0 and now + duration <= shadow
             )
             if can_backfill and self._try_alloc(job, backfill=head.jobid):
+                self._backfill_count += 1
                 self.log(
                     syslog.LOG_DEBUG,
                     f"backfill: {JobID(job.jobid).f58} (shadow={shadow:.0f})",
@@ -274,6 +284,33 @@ class BackfillScheduler(Scheduler):
         self._queue = kept
         heapq.heapify(self._queue)
         self._annotate_pending(shadow)
+
+
+    def stats_get(self):
+        """Extend base stats with backfill-specific counters.
+
+        Adds a ``backfill`` sub-object to ``scheduler_class`` containing:
+
+        ``count``
+            Total jobs backfilled (scheduled out of priority order) since
+            startup.
+        ``shadow_time``
+            Current head-job reservation time as seconds since the Unix
+            epoch, or ``None`` if the head job is not blocked.
+        ``shadow_cache``
+            ``hits`` — times the shadow-time cache was valid and reused;
+            ``misses`` — times a new simulation was run.
+        """
+        stats = super().stats_get()
+        stats["scheduler_class"]["backfill"] = {
+            "count": self._backfill_count,
+            "shadow_time": self._current_shadow,
+            "shadow_cache": {
+                "hits": self._shadow_hits,
+                "misses": self._shadow_computed,
+            },
+        }
+        return stats
 
 
 def mod_main(h, *args):
