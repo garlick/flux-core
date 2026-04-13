@@ -1460,5 +1460,86 @@ class TestRangeAlloc(unittest.TestCase):
         self.assertEqual(req.nnodes_max, 2)
 
 
+class TestRv1PoolStats(unittest.TestCase):
+    """Verify pool_stats() returns expected counters and timing fields."""
+
+    def test_initial_stats_zero(self):
+        pool = Rv1Pool(R_4x4)
+        stats = pool.pool_stats()
+        self.assertEqual(stats["name"], "Rv1Pool")
+        self.assertEqual(stats["generation"], 0)
+        self.assertEqual(stats["running_jobs"], 0)
+        self.assertEqual(stats["free"]["count"], 0)
+        for key in ("pass", "fail"):
+            s = stats["alloc"][key]
+            self.assertEqual(s["count"], 0)
+            self.assertEqual(s["min"], 0.0)
+            self.assertEqual(s["max"], 0.0)
+            self.assertEqual(s["avg"], 0.0)
+            self.assertEqual(s["variance"], 0.0)
+
+    def test_running_jobs_count(self):
+        pool = Rv1Pool(R_4x4)
+        pool.mark_up("all")
+        self.assertEqual(pool.pool_stats()["running_jobs"], 0)
+        pool.alloc(1, rr(0, 1, 1))
+        self.assertEqual(pool.pool_stats()["running_jobs"], 1)
+        pool.alloc(2, rr(0, 1, 1))
+        self.assertEqual(pool.pool_stats()["running_jobs"], 2)
+
+    def test_generation_increments(self):
+        pool = Rv1Pool(R_4x4)
+        pool.mark_up("all")
+        g0 = pool.pool_stats()["generation"]
+        pool.alloc(1, rr(0, 1, 1))
+        self.assertGreater(pool.pool_stats()["generation"], g0)
+
+    def test_alloc_increments_pass_count(self):
+        pool = Rv1Pool(R_4x4)
+        pool.alloc(1, rr(0, 1, 1))
+        stats = pool.pool_stats()
+        self.assertEqual(stats["alloc"]["pass"]["count"], 1)
+        self.assertEqual(stats["alloc"]["fail"]["count"], 0)
+        self.assertEqual(stats["free"]["count"], 0)
+
+    def test_free_increments_count(self):
+        pool = Rv1Pool(R_4x4)
+        alloc_R = pool.alloc(1, rr(0, 1, 1))
+        pool.free(1, alloc_R)
+        stats = pool.pool_stats()
+        self.assertEqual(stats["alloc"]["pass"]["count"], 1)
+        self.assertEqual(stats["free"]["count"], 1)
+        self.assertGreater(stats["free"]["min"], 0.0)
+
+    def test_alloc_time_fields_set_after_alloc(self):
+        pool = Rv1Pool(R_4x4)
+        pool.alloc(1, rr(0, 1, 1))
+        s = pool.pool_stats()["alloc"]["pass"]
+        self.assertGreater(s["min"], 0.0)
+        self.assertGreater(s["max"], 0.0)
+        # One sample: avg == min == max, variance == 0.
+        self.assertEqual(s["avg"], s["min"])
+        self.assertEqual(s["variance"], 0.0)
+
+    def test_failed_alloc_increments_fail_count(self):
+        """Failed alloc is counted under fail, not pass."""
+        pool = Rv1Pool(R_4x4)
+        pool.mark_down("all")
+        with self.assertRaises(Exception):
+            pool.alloc(1, rr(0, 1, 1))
+        stats = pool.pool_stats()
+        self.assertEqual(stats["alloc"]["fail"]["count"], 1)
+        self.assertEqual(stats["alloc"]["pass"]["count"], 0)
+
+    def test_subclass_inherits_name(self):
+        """pool_stats()['name'] reflects the actual subclass name."""
+
+        class MyPool(Rv1Pool):
+            pass
+
+        pool = MyPool(R_4x4)
+        self.assertEqual(pool.pool_stats()["name"], "MyPool")
+
+
 if __name__ == "__main__":
     unittest.main(testRunner=TAPTestRunner())
