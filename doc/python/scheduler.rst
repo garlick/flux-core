@@ -581,37 +581,62 @@ Use :man1:`flux-module` to query it:
 
    $ flux module stats my-sched
 
-Standard fields reported by the base class:
+The response structure, with each field annotated:
 
-``sched_passes``
-    Number of completed :meth:`~Scheduler.schedule` passes.
-``sched_yields``
-    Total yields across all :meth:`~Scheduler.schedule` generator passes
-    (always 0 for synchronous schedulers).
-``forecast_passes``, ``forecast_yields``
-    Equivalent counters for :meth:`~Scheduler.forecast` passes
-    (``forecast_yields`` always 0 for synchronous schedulers).
-``sched_delay``
-    Current adaptive burst-coalescing delay in seconds.
-    Always 0 for generator-based schedulers.
-``sched_duration_ewma``
-    EWMA of :meth:`~Scheduler.schedule` wall-clock duration in seconds.
-    Always 0 for generator-based schedulers.
-``sched_interval_ewma``
-    EWMA of time between scheduling requests in seconds.  Tracked for all
-    schedulers but does not affect ``sched_delay`` for generator-based
-    schedulers.
-``pending_jobs``
-    Current number of pending alloc requests in the scheduler queue.
+.. code-block:: python
 
-Subclasses can extend the response by overriding :meth:`~Scheduler.stats_get`:
+   {
+       "queue": {
+           "count": int,   # current pending alloc requests
+           "hwm":   int,   # high-water mark since startup
+       },
+       "scheduler_class": {
+           "name": str,    # scheduler class name, e.g. "FIFOScheduler"
+           "schedule": {
+               "passes":        int,   # completed schedule() passes
+               "yields":        int,   # generator yields (0 for sync schedulers)
+               "delay":         float, # burst-coalescing delay, seconds (0 for generators)
+               "duration_ewma": float, # schedule() wall-clock EWMA, seconds (0 for generators)
+               "interval_ewma": float, # time-between-requests EWMA, seconds
+           },
+           "forecast": {
+               "passes": int,  # completed forecast() passes
+               "yields": int,  # generator yields (0 for sync schedulers)
+           },
+       },
+       "pool_class": { ... },  # present when a pool is loaded (absent only if pool_stats() returns None); see Pool statistics (Rv1Pool) below
+   }
+
+Subclasses can extend ``scheduler_class`` by overriding
+:meth:`~Scheduler.stats_get`:
 
 .. code-block:: python
 
    def stats_get(self):
        stats = super().stats_get()
-       stats["my_counter"] = self._my_counter
+       stats["scheduler_class"]["my_counter"] = self._my_counter
        return stats
+
+
+Pool statistics (Rv1Pool)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:class:`~flux.resource.Rv1Pool.Rv1Pool` populates ``pool_class`` as follows.
+Timing values are floating-point seconds; variance is in seconds squared:
+
+.. code-block:: python
+
+   {
+       "name":         str,  # pool class name, e.g. "Rv1Pool"
+       "generation":   int,  # mutation counter; incremented on every alloc, free, or resource change
+       "running_jobs": int,  # jobs with resources currently allocated
+       # alloc is split into pass (succeeded) and fail (raised an exception):
+       "alloc": {
+           "pass": { "count": int, "min": float, "max": float, "avg": float, "variance": float },
+           "fail": { "count": int, "min": float, "max": float, "avg": float, "variance": float },
+       },
+       "free": { "count": int, "min": float, "max": float, "avg": float, "variance": float },
+   }
 
 
 Testing
