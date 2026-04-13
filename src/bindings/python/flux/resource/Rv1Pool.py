@@ -54,6 +54,55 @@ from flux.resource.ResourcePoolImplementation import (
 from flux.resource.Rv1Set import Rv1Set
 
 
+class _RunningStats:
+    """Welford's online algorithm for count, min, max, mean, and variance."""
+
+    __slots__ = ("count", "min", "max", "_mean", "_M2")
+
+    def __init__(self):
+        self.count = 0
+        self.min = float("inf")
+        self.max = 0.0
+        self._mean = 0.0
+        self._M2 = 0.0
+
+    def update(self, x: float) -> None:
+        self.count += 1
+        if x < self.min:
+            self.min = x
+        if x > self.max:
+            self.max = x
+        delta = x - self._mean
+        self._mean += delta / self.count
+        self._M2 += delta * (x - self._mean)
+
+    @property
+    def mean(self) -> float:
+        return self._mean if self.count else 0.0
+
+    @property
+    def variance(self) -> float:
+        return self._M2 / self.count if self.count else 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "count": self.count,
+            "min": self.min if self.count else 0.0,
+            "max": self.max,
+            "avg": self.mean,
+            "variance": self.variance,
+        }
+
+    def copy(self) -> "_RunningStats":
+        s = _RunningStats.__new__(_RunningStats)
+        s.count = self.count
+        s.min = self.min
+        s.max = self.max
+        s._mean = self._mean
+        s._M2 = self._M2
+        return s
+
+
 class ResourceRequest:
     """Parsed resource request extracted from a V1 jobspec.
 
@@ -303,6 +352,11 @@ class Rv1Pool(Rv1Set, ResourcePoolImplementation):
         # _job_state: jobid -> (end_time, alloc) for all tracked jobs.
         self._job_state: Dict[int, Tuple[float, "Rv1Pool"]] = {}
 
+        # Statistics exposed via pool_stats().
+        self._alloc_pass_stats = _RunningStats()
+        self._alloc_fail_stats = _RunningStats()
+        self._free_stats = _RunningStats()
+
     # ------------------------------------------------------------------
     # Rv1Set override: _copy_from_ranks must add pool-specific fields
     # ------------------------------------------------------------------
@@ -418,6 +472,7 @@ class Rv1Pool(Rv1Set, ResourcePoolImplementation):
                 allocation, or if ``final`` is True and ``R`` does not match
                 the tracked allocation exactly.
         """
+        _t0 = time.monotonic()
         if R is not None and jobid in self._job_state:
             _, alloc = self._job_state[jobid]
             extra = set(R._ranks.keys()) - set(alloc._ranks.keys())
@@ -471,6 +526,7 @@ class Rv1Pool(Rv1Set, ResourcePoolImplementation):
             syslog.LOG_DEBUG,
             f"free: {JobID(jobid).f58}: {freed_dumps}" + (" (final)" if final else ""),
         )
+        self._free_stats.update(time.monotonic() - _t0)
         self._bump()
 
     def update_expiration(self, jobid: int, expiration: float) -> None:
@@ -523,6 +579,41 @@ class Rv1Pool(Rv1Set, ResourcePoolImplementation):
             )
         self._check_feasibility(request)
 
+    def pool_stats(self):
+        """Return a dict of pool statistics for the stats-get response.
+
+        Calls ``super().pool_stats()`` (which provides ``name``) and updates
+        the returned dict with the following additional keys:
+
+        ``generation``
+            Monotonically increasing mutation counter since startup.
+        ``running_jobs``
+            Number of jobs with resources currently allocated.
+        ``free``
+            Timing stats for :meth:`free` calls (same structure as
+            ``alloc.pass``).
+        ``alloc``
+            Sub-object with ``pass`` and ``fail`` keys, each containing
+            timing stats for successful and failed :meth:`alloc` calls
+            respectively.  Each stats object has the keys ``count``,
+            ``min``, ``max``, ``avg``, and ``variance`` (wall-clock time
+            in seconds; variance in seconds squared).
+
+        Subclasses should call ``super().pool_stats()`` and add their own
+        keys to the returned dict.
+        """
+        stats = super().pool_stats()
+        stats.update({
+            "generation": self.generation,
+            "running_jobs": len(self._job_state),
+            "free": self._free_stats.to_dict(),
+            "alloc": {
+                "pass": self._alloc_pass_stats.to_dict(),
+                "fail": self._alloc_fail_stats.to_dict(),
+            },
+        })
+        return stats
+
     def alloc(self, jobid: int, request) -> "Rv1Pool":
         """Allocate resources for *jobid* matching *request*.
 
@@ -538,6 +629,17 @@ class Rv1Pool(Rv1Set, ResourcePoolImplementation):
             InsufficientResources: Resources temporarily insufficient.
             InfeasibleRequest: Request structurally infeasible.
         """
+        _t0 = time.monotonic()
+        try:
+            result = self._alloc(jobid, request)
+            self._alloc_pass_stats.update(time.monotonic() - _t0)
+            return result
+        except Exception:
+            self._alloc_fail_stats.update(time.monotonic() - _t0)
+            raise
+
+    def _alloc(self, jobid: int, request) -> "Rv1Pool":
+        """Inner implementation of :meth:`alloc`; called with timing wrapper."""
         if request.node_count is not None and request.node_count._values is not None:
             raise InfeasibleRequest(
                 "node count specifies discrete valid values that this scheduler "
@@ -646,6 +748,9 @@ class Rv1Pool(Rv1Set, ResourcePoolImplementation):
             new._ranks[rank]["allocated_gpus"] = set(info["allocated_gpus"])
         new.scheduling = self.scheduling
         new._job_state = dict(self._job_state)
+        new._alloc_pass_stats = self._alloc_pass_stats.copy()
+        new._alloc_fail_stats = self._alloc_fail_stats.copy()
+        new._free_stats = self._free_stats.copy()
         # Do not copy self.log: copies are used for simulation (forecast /
         # shadow-time) and their alloc/free calls must not emit log lines.
         return new
