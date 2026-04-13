@@ -344,6 +344,7 @@ class Scheduler(BrokerModule):
         self._resources = None
         self._acquire_rpc = None
         self._queue = []  # heapq of PendingJob, ordered by PendingJob.__lt__
+        self._queue_hwm = 0
         # Adaptive scheduling timer: defers schedule() calls to coalesce bursts.
         # _sched_pending: True while the timer is armed (prevents re-arming).
         # _sched_delay: current one-shot delay in seconds (0 = next iteration).
@@ -801,6 +802,8 @@ class Scheduler(BrokerModule):
             self._queue,
             PendingJob(jobid, priority, t_submit, request, rr),
         )
+        if len(self._queue) > self._queue_hwm:
+            self._queue_hwm = len(self._queue)
 
     def free(self, jobid, R, final=False):
         """Return released resources to the pool.
@@ -1057,8 +1060,9 @@ class Scheduler(BrokerModule):
 
         Standard fields:
 
-        ``pending_jobs``
-            Current number of pending alloc requests in the scheduler queue.
+        ``queue``
+            Sub-object with ``count`` (current pending alloc requests) and
+            ``hwm`` (high-water mark since startup).
         ``scheduler_class``
             Sub-object describing the scheduler implementation:
 
@@ -1083,7 +1087,10 @@ class Scheduler(BrokerModule):
             returns a non-None value.
         """
         stats = {
-            "pending_jobs": len(self._queue),
+            "queue": {
+                "count": len(self._queue),
+                "hwm": self._queue_hwm,
+            },
             "scheduler_class": {
                 "name": type(self).__name__,
                 "schedule": {
