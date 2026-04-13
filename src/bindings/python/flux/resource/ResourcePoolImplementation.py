@@ -129,6 +129,27 @@ class ResourcePoolImplementation(ResourceSetImplementation):  # pragma: no cover
         """Check whether *request* is structurally satisfiable."""
         raise NotImplementedError
 
+    def pool_stats(self):
+        """Return a dict of pool statistics for the stats-get response, or None.
+
+        Called by the scheduler's ``stats-get`` handler via
+        :meth:`~flux.resource.ResourcePool.ResourcePool.pool_stats`.
+        Return ``None`` to omit the ``pool_class`` sub-object from the
+        response entirely.
+
+        The default implementation returns ``{"name": type(self).__name__}``
+        so that any pool appears in stats with at least its class name.
+        Subclasses should call ``super().pool_stats()`` and extend the dict:
+
+        .. code-block:: python
+
+            def pool_stats(self):
+                stats = super().pool_stats()
+                stats["custom_counter"] = self._custom_counter
+                return stats
+        """
+        return {"name": type(self).__name__}
+
     # ------------------------------------------------------------------
     # Structural copies
     # ------------------------------------------------------------------

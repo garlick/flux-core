@@ -151,6 +151,14 @@ class ResourcePool:
         """Check whether *request* is structurally satisfiable."""
         self.impl.check_feasibility(request)
 
+    def pool_stats(self):
+        """Return pool statistics for the stats-get response, or None.
+
+        Delegates to :meth:`~flux.resource.ResourcePoolImplementation.ResourcePoolImplementation.pool_stats`
+        on the underlying implementation.
+        """
+        return self.impl.pool_stats()
+
     # ------------------------------------------------------------------
     # Structural copies
     # ------------------------------------------------------------------

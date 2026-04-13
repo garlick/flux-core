@@ -1080,7 +1080,7 @@ class Scheduler(BrokerModule):
         ``pending_jobs``
             Current number of pending alloc requests in the scheduler queue.
         """
-        return {
+        stats = {
             "sched_passes": self._sched_passes,
             "sched_yields": self._sched_yields,
             "forecast_passes": self._forecast_passes,
@@ -1090,6 +1090,11 @@ class Scheduler(BrokerModule):
             "sched_interval_ewma": self._sched_interval_ewma,
             "pending_jobs": len(self._queue),
         }
+        if self.resources is not None:
+            pool_stats = self.resources.pool_stats()
+            if pool_stats is not None:
+                stats["pool_class"] = pool_stats
+        return stats
 
     # ------------------------------------------------------------------
     # Internal: RFC 27 initialization helpers
