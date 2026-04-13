@@ -10,9 +10,9 @@ SCHED_SLOWGEN=${SHARNESS_TEST_SRCDIR}/scheduler/sched-slowgen.py
 
 test_under_flux 2 job
 
-# Shorthand: query a single stats field as a number
+# Shorthand: query a single stats field as a number (jq path, e.g. ".queue.count")
 sched_stat() {
-	flux module stats sched-slowgen | jq ".$1"
+	flux module stats sched-slowgen | jq "$1"
 }
 
 test_expect_success 'unload sched-simple, load sched-slowgen' '
@@ -26,14 +26,14 @@ test_expect_success 'unload sched-simple, load sched-slowgen' '
 
 test_expect_success 'stats-get returns expected fields' '
 	flux module stats sched-slowgen >stats.json &&
-	jq -e ".sched_passes >= 0" stats.json &&
-	jq -e ".sched_yields >= 0" stats.json &&
-	jq -e ".forecast_passes >= 0" stats.json &&
-	jq -e ".forecast_yields >= 0" stats.json &&
-	jq -e ".sched_delay >= 0" stats.json &&
-	jq -e ".sched_duration_ewma >= 0" stats.json &&
-	jq -e ".sched_interval_ewma >= 0" stats.json &&
-	jq -e ".pending_jobs >= 0" stats.json
+	jq -e ".scheduler_class.schedule.passes >= 0" stats.json &&
+	jq -e ".scheduler_class.schedule.yields >= 0" stats.json &&
+	jq -e ".scheduler_class.forecast.passes >= 0" stats.json &&
+	jq -e ".scheduler_class.forecast.yields >= 0" stats.json &&
+	jq -e ".scheduler_class.schedule.delay >= 0" stats.json &&
+	jq -e ".scheduler_class.schedule.duration_ewma >= 0" stats.json &&
+	jq -e ".scheduler_class.schedule.interval_ewma >= 0" stats.json &&
+	jq -e ".queue.count >= 0" stats.json
 '
 
 # -------------------------------------------------------------------
@@ -41,14 +41,14 @@ test_expect_success 'stats-get returns expected fields' '
 # -------------------------------------------------------------------
 
 test_expect_success 'record sched_passes before submitting a job' '
-	sched_stat sched_passes >passes_before.txt
+	sched_stat .scheduler_class.schedule.passes >passes_before.txt
 '
 test_expect_success 'submit and run a job' '
 	flux run -N1 true
 '
 test_expect_success 'sched_passes incremented after job ran' '
 	passes_before=$(cat passes_before.txt) &&
-	passes_after=$(sched_stat sched_passes) &&
+	passes_after=$(sched_stat .scheduler_class.schedule.passes) &&
 	test "$passes_after" -gt "$passes_before"
 '
 
@@ -64,21 +64,21 @@ test_expect_success 'unload job-exec to prevent job execution' '
 	flux module unload job-exec
 '
 test_expect_success 'submit 4 jobs on a 2-slot instance' '
-	sched_stat sched_passes >passes_before4.txt &&
+	sched_stat .scheduler_class.schedule.passes >passes_before4.txt &&
 	for i in $(seq 1 4); do
 		flux submit -N1 true
 	done
 '
 test_expect_success 'wait for scheduler to process the queue' '
 	passes_before=$(cat passes_before4.txt) &&
-	test_wait_until "test \$(sched_stat sched_passes) -gt $passes_before"
+	test_wait_until "test \$(sched_stat .scheduler_class.schedule.passes) -gt $passes_before"
 '
 test_expect_success 'sched_yields > 0 confirms reactor ran during pass' '
-	yields=$(sched_stat sched_yields) &&
+	yields=$(sched_stat .scheduler_class.schedule.yields) &&
 	test "$yields" -gt 0
 '
 test_expect_success 'pending_jobs reflects pending jobs' '
-	depth=$(sched_stat pending_jobs) &&
+	depth=$(sched_stat .queue.count) &&
 	test "$depth" -gt 0
 '
 test_expect_success 'cancel all pending jobs and reload job-exec' '

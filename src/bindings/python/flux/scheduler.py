@@ -1052,43 +1052,52 @@ class Scheduler(BrokerModule):
 
             def stats_get(self):
                 stats = super().stats_get()
-                stats["my_counter"] = self._my_counter
+                stats["scheduler_class"]["my_counter"] = self._my_counter
                 return stats
 
         Standard fields:
 
-        ``sched_passes``
-            Number of completed :meth:`schedule` passes.
-        ``sched_yields``
-            Total yields across all :meth:`schedule` generator passes
-            (always 0 for synchronous schedulers).
-        ``forecast_passes``
-            Number of completed :meth:`forecast` passes.
-        ``forecast_yields``
-            Total yields across all :meth:`forecast` generator passes
-            (always 0 for synchronous schedulers).
-        ``sched_delay``
-            Current adaptive burst-coalescing delay in seconds (0 = immediate).
-            Always 0 for generator-based schedulers.
-        ``sched_duration_ewma``
-            EWMA of :meth:`schedule` wall-clock duration in seconds.
-            Always 0 for generator-based schedulers.
-        ``sched_interval_ewma``
-            EWMA of time between :meth:`_request_schedule` calls in seconds.
-            Tracked for all schedulers but does not affect ``sched_delay``
-            for generator-based schedulers.
         ``pending_jobs``
             Current number of pending alloc requests in the scheduler queue.
+        ``scheduler_class``
+            Sub-object describing the scheduler implementation:
+
+            ``name``
+                Scheduler class name (e.g. ``"FIFOScheduler"``).
+            ``schedule``
+                ``passes`` — completed :meth:`schedule` passes;
+                ``yields`` — total yields across generator passes (0 for
+                synchronous schedulers);
+                ``delay`` — current adaptive burst-coalescing delay in seconds
+                (0 for generator-based schedulers);
+                ``duration_ewma`` — EWMA of :meth:`schedule` wall-clock
+                duration in seconds (0 for generator-based schedulers);
+                ``interval_ewma`` — EWMA of time between
+                :meth:`_request_schedule` calls in seconds.
+            ``forecast``
+                ``passes`` — completed :meth:`forecast` passes;
+                ``yields`` — total yields across generator passes.
+        ``pool_class``
+            Pool implementation statistics; present only when the pool's
+            :meth:`~flux.resource.ResourcePoolImplementation.ResourcePoolImplementation.pool_stats`
+            returns a non-None value.
         """
         stats = {
-            "sched_passes": self._sched_passes,
-            "sched_yields": self._sched_yields,
-            "forecast_passes": self._forecast_passes,
-            "forecast_yields": self._forecast_yields,
-            "sched_delay": self._sched_delay,
-            "sched_duration_ewma": self._sched_duration_ewma,
-            "sched_interval_ewma": self._sched_interval_ewma,
             "pending_jobs": len(self._queue),
+            "scheduler_class": {
+                "name": type(self).__name__,
+                "schedule": {
+                    "passes": self._sched_passes,
+                    "yields": self._sched_yields,
+                    "delay": self._sched_delay,
+                    "duration_ewma": self._sched_duration_ewma,
+                    "interval_ewma": self._sched_interval_ewma,
+                },
+                "forecast": {
+                    "passes": self._forecast_passes,
+                    "yields": self._forecast_yields,
+                },
+            },
         }
         if self.resources is not None:
             pool_stats = self.resources.pool_stats()
