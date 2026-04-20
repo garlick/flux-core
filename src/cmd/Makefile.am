@@ -112,6 +112,7 @@ dist_fluxcmd_SCRIPTS = \
 	flux-fortune.py \
 	flux-resource.py \
 	flux-admin.py \
+	flux-sd.py \
 	flux-jobtap.py \
 	flux-job-validator.py \
 	flux-job-frobnicator.py \
