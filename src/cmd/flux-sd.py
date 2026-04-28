@@ -257,8 +257,8 @@ def build_cols(rows, multi):
         )
 
     cpu_vals = [fmt_cpuset_nodes(r["cpus"], r["nodes"]) for r in rows]
-    cpusw = max(max((len(v) for v in cpu_vals), default=0), len("AllowedCPUs"))
-    cols.append(("cpus", "AllowedCPUs", cpusw, fmt_cpuset_nodes))
+    cpusw = max(max((len(v) for v in cpu_vals), default=0), len("CPU/NUMA"))
+    cols.append(("cpus", "CPU/NUMA", cpusw, fmt_cpuset_nodes))
 
     dev_vals = [r["device"] for r in rows]
     devw = max(max((len(v) for v in dev_vals), default=0), len("Device"))
