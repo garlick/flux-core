@@ -260,14 +260,13 @@ def build_cols(rows, multi):
             ("cpu", "CPUUsage", 8, lambda v: fmt_cpu(v) if 0 < v < UINT64_MAX else "")
         )
 
-    if any(r["cpus"] for r in rows):
-        cpu_vals = [fmt_cpuset_nodes(r["cpus"], r["nodes"]) for r in rows if r["cpus"]]
-        cpusw = max(max(len(v) for v in cpu_vals), len("AllowedCPUs"))
-        cols.append(("cpus", "AllowedCPUs", cpusw, fmt_cpuset_nodes))
+    cpu_vals = [fmt_cpuset_nodes(r["cpus"], r["nodes"]) for r in rows]
+    cpusw = max(max((len(v) for v in cpu_vals), default=0), len("AllowedCPUs"))
+    cols.append(("cpus", "AllowedCPUs", cpusw, fmt_cpuset_nodes))
 
-    if any(r["device"] for r in rows):
-        devw = max(max(len(r["device"]) for r in rows if r["device"]), len("Device"))
-        cols.append(("device", "Device", devw, str))
+    dev_vals = [r["device"] for r in rows]
+    devw = max(max((len(v) for v in dev_vals), default=0), len("Device"))
+    cols.append(("device", "Device", devw, str))
 
     return cols
 
