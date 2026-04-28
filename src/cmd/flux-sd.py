@@ -13,6 +13,7 @@ import curses
 import json
 import locale
 import logging
+import shutil
 import sys
 import time
 from datetime import datetime
@@ -84,6 +85,37 @@ def fmt_cpuset(byte_array):
     if not cpus:
         return ""
     return str(IDset(",".join(str(c) for c in cpus)))
+
+
+def fmt_cpuset_nodes(cpus, nodes):
+    """Format AllowedCPUs with optional AllowedMemoryNodes as cpuset[/nodeset]."""
+    cpu_str = fmt_cpuset(cpus)
+    if not cpu_str:
+        return ""
+    node_str = fmt_cpuset(nodes)
+    return f"{cpu_str}/{node_str}" if node_str else cpu_str
+
+
+def fmt_device(policy, allow_count):
+    """Format DevicePolicy[/N] where N is the number of DeviceAllow entries."""
+    if policy == "auto" and allow_count == 0:
+        return ""
+    if allow_count > 0:
+        return f"{policy}/{allow_count}"
+    return policy
+
+
+def fit_cols(cols, width):
+    """Return the leading subset of cols that fits within width characters."""
+    total = 0
+    result = []
+    for col in cols:
+        sep = 2 if result else 0
+        if total + sep + col[2] > width:
+            break
+        total += sep + col[2]
+        result.append(col)
+    return result or cols[:1]
 
 
 def fmt_cpu(nsec):
@@ -183,6 +215,11 @@ def fetch_data(handle, ranks, multi, hostlist, pattern):
                 "tasks": get_prop(rank, path, "TasksCurrent") or 0,
                 "cpu": get_prop(rank, path, "CPUUsageNSec") or 0,
                 "cpus": get_prop(rank, path, "AllowedCPUs") or [],
+                "nodes": get_prop(rank, path, "AllowedMemoryNodes") or [],
+                "device": fmt_device(
+                    get_prop(rank, path, "DevicePolicy") or "auto",
+                    len(get_prop(rank, path, "DeviceAllow") or []),
+                ),
             }
         )
     return rows
@@ -224,8 +261,13 @@ def build_cols(rows, multi):
         )
 
     if any(r["cpus"] for r in rows):
-        cpusw = max(max(len(fmt_cpuset(r["cpus"])) for r in rows), len("AllowedCPUs"))
-        cols.append(("cpus", "AllowedCPUs", cpusw, fmt_cpuset))
+        cpu_vals = [fmt_cpuset_nodes(r["cpus"], r["nodes"]) for r in rows if r["cpus"]]
+        cpusw = max(max(len(v) for v in cpu_vals), len("AllowedCPUs"))
+        cols.append(("cpus", "AllowedCPUs", cpusw, fmt_cpuset_nodes))
+
+    if any(r["device"] for r in rows):
+        devw = max(max(len(r["device"]) for r in rows if r["device"]), len("Device"))
+        cols.append(("device", "Device", devw, str))
 
     return cols
 
@@ -236,6 +278,8 @@ def fmt_row(row, cols):
     for key, _hdr, width, fmt in cols:
         if key == "mem":
             val = fmt(row[key], row.get("mem_max", UINT64_MAX))
+        elif key == "cpus":
+            val = fmt(row["cpus"], row.get("nodes", []))
         else:
             val = fmt(row[key])
         if key in ("host", "name"):
@@ -296,6 +340,8 @@ def sort_rows(rows, sort_key, sort_rev):
 def plain_output(rows, cols, sort_key="n", sort_rev=False):
     """Print rows as plain text (non-watch mode)."""
     rows = sort_rows(rows, sort_key, sort_rev)
+    if sys.stdout.isatty():
+        cols = fit_cols(cols, shutil.get_terminal_size().columns)
     print(fmt_header(cols, sort_key, sort_rev))
     for row in rows:
         print(fmt_row(row, cols))
@@ -331,6 +377,7 @@ def safe_addstr(stdscr, y, x, s, attr=curses.A_NORMAL):
 
 def draw_screen(stdscr, rows, cols, sort_key, sort_rev, has_color, selected=0):
     height, width = stdscr.getmaxyx()
+    cols = fit_cols(cols, width)
     stdscr.erase()
 
     # Title bar
