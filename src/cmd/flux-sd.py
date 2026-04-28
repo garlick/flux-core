@@ -97,12 +97,8 @@ def fmt_cpuset_nodes(cpus, nodes):
 
 
 def fmt_device(policy, allow_count):
-    """Format DevicePolicy[/N] where N is the number of DeviceAllow entries."""
-    if policy == "auto" and allow_count == 0:
-        return ""
-    if allow_count > 0:
-        return f"{policy}/{allow_count}"
-    return policy
+    """Format DevicePolicy/N where N is the number of DeviceAllow entries."""
+    return f"{policy}/{allow_count}"
 
 
 def fit_cols(cols, width):
