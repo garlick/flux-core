@@ -189,6 +189,7 @@ TESTSCRIPTS = \
 	t2307-sched-backfill.t \
 	t2308-sched-generator.t \
 	t2309-sched-rack.t \
+	t2319-sched-affinity.t \
 	t2310-resource-module.t \
 	t2311-resource-drain.t \
 	t2312-resource-exclude.t \
