@@ -103,6 +103,7 @@ flux_LDADD = \
 
 dist_fluxcmd_SCRIPTS = \
 	flux-cron \
+	flux-affinity-tree.py \
 	flux-alloc.py \
 	flux-batch.py \
 	flux-run.py \
