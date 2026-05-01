@@ -19,11 +19,12 @@ to the allocation are highlighted in green.
 When R.scheduling.topology is absent or the writer is not recognised,
 a flat summary (cores and GPUs per rank) is shown instead.
 
-Example output for a 1-core + 1-GPU slot on rank 0 of a 2-socket node::
+Example output for a 1-core + 1-GPU slot on rank 0 of a 2-socket node
+(allocated IDs are shown in green in a colour-capable terminal)::
 
-    rank 0 (gpu0)  [1 core, 1 GPU allocated]
+    node0 (0)  [1 core, 1 GPU allocated]
     ├─ socket 0
-    │  ├─ numa 0: cores 0-14  gpu 0  ← core 0, gpu 0
+    │  ├─ numa 0: cores 0,1-14  gpu 0          ← core 0 and gpu 0 in green
     │  ├─ numa 1: cores 15-29  gpu 1
     │  ├─ numa 2: cores 30-44  gpu 2
     │  └─ numa 3: cores 45-59  gpu 3
@@ -38,10 +39,11 @@ import json
 import subprocess
 import sys
 
+import flux
+from flux.hostlist import Hostlist
 from flux.idset import IDset
 
 _RESET = "\033[0m"
-_BOLD = "\033[1m"
 _GREEN = "\033[32m"
 
 
@@ -58,6 +60,39 @@ def _fmt_idset(ids):
     return str(IDset(ids)) if ids else ""
 
 
+def _fmt_colored_idset(node_str, alloc_ids):
+    """Render *node_str* idset with allocated IDs in green, rest in default.
+
+    Runs are interleaved in numerical order so the output reads naturally
+    (e.g. "0-2,[green]3[/green],4-14").
+    """
+    all_ids = _idset(node_str)
+    alloc_here = all_ids & alloc_ids
+    if not alloc_here:
+        return node_str
+    if not (all_ids - alloc_here):
+        return f"{_GREEN}{node_str}{_RESET}"
+    # Mixed: walk sorted values, group into same-colour runs, then join.
+    segments = []
+    cur_alloc = None
+    cur_run = []
+    for v in sorted(all_ids):
+        is_alloc = v in alloc_here
+        if cur_alloc is None or is_alloc != cur_alloc:
+            if cur_run:
+                segments.append((cur_alloc, cur_run))
+            cur_alloc, cur_run = is_alloc, [v]
+        else:
+            cur_run.append(v)
+    if cur_run:
+        segments.append((cur_alloc, cur_run))
+    parts = []
+    for is_alloc, run in segments:
+        s = _fmt_idset(set(run))
+        parts.append(f"{_GREEN}{s}{_RESET}" if is_alloc else s)
+    return ",".join(parts)
+
+
 def _print_node(node, label, alloc_cores, alloc_gpus, prefix, is_last):
     """Recursively print one topology node.
 
@@ -72,26 +107,12 @@ def _print_node(node, label, alloc_cores, alloc_gpus, prefix, is_last):
     child_prefix = prefix + ("   " if is_last else "│  ")
 
     if "cores" in node:
-        # Leaf: print with allocation annotation and optional colour.
-        node_cores = _idset(node.get("cores", ""))
-        node_gpus = _idset(node.get("gpus", ""))
-        hit_c = node_cores & alloc_cores
-        hit_g = node_gpus & alloc_gpus
-        allocated = bool(hit_c or hit_g)
-
-        text = f"{label}: cores {node['cores']}"
+        # Leaf: colour allocated IDs green inline, unallocated in default.
+        cores_str = _fmt_colored_idset(node["cores"], alloc_cores)
+        text = f"{label}: cores {cores_str}"
         if "gpus" in node:
-            text += f"  gpu {node['gpus']}"
-        if allocated:
-            parts = []
-            if hit_c:
-                parts.append(f"core {_fmt_idset(hit_c)}")
-            if hit_g:
-                parts.append(f"gpu {_fmt_idset(hit_g)}")
-            text += f"  ← {', '.join(parts)}"
-            print(f"{_BOLD}{_GREEN}{prefix}{connector}{text}{_RESET}")
-        else:
-            print(f"{prefix}{connector}{text}")
+            text += f"  gpu {_fmt_colored_idset(node['gpus'], alloc_gpus)}"
+        print(f"{prefix}{connector}{text}")
     else:
         # Interior: print label, then recurse into the child list.
         print(f"{prefix}{connector}{label}")
@@ -111,18 +132,50 @@ def _print_node(node, label, alloc_cores, alloc_gpus, prefix, is_last):
                 )
 
 
+def _instance_resources(ranks):
+    """Return {rank: {"cores": frozenset, "gpus": frozenset}} from instance R.
+
+    Fetches the full instance R via a resource.status RPC so that unallocated
+    cores/GPUs on each node are visible alongside the allocated ones.
+    Returns an empty dict if the RPC fails for any reason.
+    """
+    try:
+        h = flux.Flux()
+        R_inst = h.rpc("resource.status", nodeid=0).get()["R"]
+    except Exception:
+        return {}
+    result = {}
+    for entry in R_inst.get("execution", {}).get("R_lite", []):
+        ch = entry.get("children", {})
+        cores = _idset(ch.get("core", ""))
+        gpus = _idset(ch.get("gpu", ""))
+        for rank in IDset(entry["rank"]):
+            if rank in ranks:
+                result[rank] = {"cores": cores, "gpus": gpus}
+    return result
+
+
 def _print_flat(sorted_ranks, hostname_by_rank, alloc_by_rank):
-    """Print a flat (non-NUMA) summary when topology data is unavailable."""
+    """Print a flat (non-NUMA) summary when topology data is unavailable.
+
+    Full per-node resources are fetched from the instance R via RPC so that
+    unallocated cores/GPUs are shown in default colour alongside the allocated
+    ones (in green), matching the behaviour of the tree output.
+    """
+    inst = _instance_resources(set(sorted_ranks))
     for rank in sorted_ranks:
         hostname = hostname_by_rank.get(rank, f"rank{rank}")
         alloc = alloc_by_rank.get(rank, {})
-        cores = alloc.get("cores", frozenset())
-        gpus = alloc.get("gpus", frozenset())
-        print(f"rank {rank} ({hostname})")
-        if cores:
-            print(f"  cores {_fmt_idset(cores)}")
-        if gpus:
-            print(f"  gpus  {_fmt_idset(gpus)}")
+        alloc_cores = alloc.get("cores", frozenset())
+        alloc_gpus = alloc.get("gpus", frozenset())
+        full = inst.get(rank, {})
+        all_cores = full.get("cores") or alloc_cores
+        all_gpus = full.get("gpus") or alloc_gpus
+        print(f"{hostname} ({rank})")
+        if all_cores:
+            print(f"  cores {_fmt_colored_idset(_fmt_idset(all_cores), alloc_cores)}")
+        if all_gpus:
+            print(f"  gpus  {_fmt_colored_idset(_fmt_idset(all_gpus), alloc_gpus)}")
         print()
 
 
@@ -147,11 +200,12 @@ def affinity_tree(jobid):
     R_lite = R.get("execution", {}).get("R_lite", [])
     nodelist = R.get("execution", {}).get("nodelist", [])
 
-    # Map rank → hostname: R_lite entries are in sorted-rank order,
-    # which matches the nodelist index.
+    # Map rank → hostname.  nodelist is an array of hostlist strings whose
+    # expansions, concatenated in order, give one hostname per rank.
     sorted_ranks = sorted(r for entry in R_lite for r in IDset(entry["rank"]))
+    all_hosts = [h for hl in nodelist for h in Hostlist(hl)]
     hostname_by_rank = {
-        rank: nodelist[i] for i, rank in enumerate(sorted_ranks) if i < len(nodelist)
+        rank: all_hosts[i] for i, rank in enumerate(sorted_ranks) if i < len(all_hosts)
     }
 
     # Map rank → (alloc_cores, alloc_gpus) from R_lite children.
@@ -184,7 +238,7 @@ def affinity_tree(jobid):
             parts.append(f"{n} GPU{'s' if n != 1 else ''}")
         summary = f"  [{', '.join(parts)} allocated]" if parts else ""
 
-        print(f"rank {rank} ({hostname}){summary}")
+        print(f"{hostname} ({rank}){summary}")
         for key, children in rank_data.items():
             if not isinstance(children, list):
                 continue
