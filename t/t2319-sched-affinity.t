@@ -107,6 +107,11 @@ test_expect_success 'allocated topology trimmed to the one assigned node' '
 	flux job info ${jobid} R | jq -e ".scheduling.topology | keys | length == 1"
 '
 
+# In the test topology gpu G maps to cores [G*15, G*15+14] (15 cores per NUMA node).
+test_expect_success 'allocated core is NUMA-local to its GPU' '
+	flux job info ${jobid} R | jq -e ".execution.R_lite[0] | (.children.gpu|tonumber) as \$g | (.children.core|tonumber) as \$c | \$c >= \$g*15 and \$c <= \$g*15+14"
+'
+
 test_expect_success 'cleanup GPU+core job' '
 	flux cancel ${jobid} &&
 	flux job wait-event --timeout=10 ${jobid} clean
@@ -138,6 +143,17 @@ test_expect_success 'single-GPU+core slots allocate on two separate nodes' '
 	flux job wait-event --timeout=10 ${job1} alloc &&
 	flux cancel ${job0} ${job1} &&
 	flux job wait-event --timeout=10 ${job1} clean
+'
+
+# Fill all GPUs across all 16 nodes (16 nodes × 8 GPUs = 128 slots), then
+# verify that a CPU-only job still allocates despite no free GPUs anywhere.
+test_expect_success 'CPU-only job runs when all GPUs in pool are exhausted' '
+	gpujob=$(flux submit -N16 -n128 -c1 -g1 sleep inf) &&
+	flux job wait-event --timeout=30 ${gpujob} alloc &&
+	cpujob=$(flux submit -N1 -n1 -c1 sleep inf) &&
+	flux job wait-event --timeout=10 ${cpujob} alloc &&
+	flux cancel ${gpujob} ${cpujob} &&
+	flux job wait-event --timeout=30 ${gpujob} clean
 '
 
 test_done
