@@ -12,6 +12,7 @@
 #define HAVE_UTIL_RHWLOC_H 1
 
 #include <hwloc.h>
+#include <jansson.h>
 
 #include "src/common/libflux/types.h" /* flux_error_t */
 
@@ -59,6 +60,11 @@ char * rhwloc_core_idset_string (hwloc_topology_t topo);
  *  ancestor).  Sets *count_out to the number of entries.  Returns NULL with
  *  *count_out == 0 when no GPUs are present.  Caller must free().
  */
+/*  Walk obj's parent chain and return the first HWLOC_OBJ_PCI_DEVICE
+ *  ancestor, or NULL if none.
+ */
+hwloc_obj_t rhwloc_osdev_get_pcidev (hwloc_obj_t obj);
+
 hwloc_obj_t *rhwloc_gpu_objects (hwloc_topology_t topo, int *count_out);
 
 /*  Return idset string for all GPUs in hwloc topology object
@@ -73,5 +79,14 @@ int rhwloc_count_type (hwloc_topology_t topo, const char *type);
 /*  Return rlist object from local hwloc topology, or from xml if non-NULL.
  */
 struct rlist *rlist_from_hwloc (int my_rank, const char *xml);
+
+/*  Build 'format' style scheduling key for the given topology.
+ *  Return object on success which caller must json_decref().
+ *  Return NULL on failure with errno set.
+ */
+json_t *rhwloc_scheduling (hwloc_topology_t topo,
+                           const char *format,
+                           const char *ranks,
+                           flux_error_t *errp);
 
 #endif /* !HAVE_UTIL_RHWLOC */

@@ -32,6 +32,8 @@ librlist_la_SOURCES = \
 librlist_hwloc_la_SOURCES = \
 	rhwloc.c \
 	rhwloc.h \
+	rhwloc_scheduling.c \
+	rhwloc_scheduling_treepool.c \
 	rhwloc_map.c \
 	rhwloc_map.h
 
@@ -53,7 +55,8 @@ TESTS = \
 	test_match.t \
 	test_rlist.t \
 	test_rhwloc.t \
-	test_rhwloc_map.t
+	test_rhwloc_map.t \
+	test_rhwloc_scheduling.t
 
 check_PROGRAMS = \
 	$(TESTS)
@@ -121,4 +124,16 @@ test_rhwloc_map_t_LDADD = \
 	$(test_ldadd) \
 	$(HWLOC_LIBS)
 test_rhwloc_map_t_LDFLAGS = \
+	$(test_ldflags)
+
+test_rhwloc_scheduling_t_SOURCES = \
+	test/rhwloc_scheduling.c
+test_rhwloc_scheduling_t_CPPFLAGS = \
+	$(test_cppflags)
+test_rhwloc_scheduling_t_LDADD = \
+	librlist-hwloc.la \
+	librlist.la \
+	$(test_ldadd) \
+	$(HWLOC_LIBS)
+test_rhwloc_scheduling_t_LDFLAGS = \
 	$(test_ldflags)

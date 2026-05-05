@@ -12,6 +12,7 @@
 #include "config.h"
 #endif
 #include <flux/hostlist.h>
+#include <jansson.h>
 
 #include "src/common/libtap/tap.h"
 #include "src/common/libutil/errprintf.h"
@@ -976,6 +977,7 @@ void test_gpu_objects (void)
 
     hwloc_topology_destroy (topo);
 }
+
 
 int main (int ac, char *av[])
 {
