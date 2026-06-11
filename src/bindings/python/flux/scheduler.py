@@ -370,6 +370,18 @@ class Scheduler(BrokerModule):
         self._forecast_passes = 0
         self._forecast_yields = 0
         self._pending_args = []
+        # First pass: process log-level to configure logger before loading pool class
+        for arg in args:
+            if arg.startswith("log-level="):
+                name = arg[10:].lower()
+                try:
+                    self.log.level = name
+                except ValueError:
+                    raise ValueError(
+                        f"log-level={name!r} is invalid: "
+                        f"expected one of {', '.join(BrokerLogger.LEVEL_NAMES)}"
+                    )
+        # Second pass: process remaining arguments
         for arg in args:
             if arg.startswith("queue-depth="):
                 val = arg[12:]
@@ -400,19 +412,16 @@ class Scheduler(BrokerModule):
                         f"mode=limited= requires a positive integer, got {val!r}"
                     )
             elif arg.startswith("log-level="):
-                name = arg[10:].lower()
-                try:
-                    self.log.level = name
-                except ValueError:
-                    raise ValueError(
-                        f"log-level={name!r} is invalid: "
-                        f"expected one of {', '.join(BrokerLogger.LEVEL_NAMES)}"
-                    )
+                # Already processed in first pass
+                pass
             elif arg.startswith("pool-class="):
                 uri = arg[len("pool-class=") :]
                 cls = self._pool_class_from_uri(uri)
                 if cls is None:
-                    raise ValueError(f"pool-class={uri!r}: could not load pool class")
+                    error_detail = getattr(self, '_last_pool_load_error', 'unknown error')
+                    raise ValueError(
+                        f"pool-class={uri!r}: could not load pool class ({error_detail})"
+                    )
                 self.pool_class = cls
             else:
                 self._pending_args.append(arg)
@@ -1118,7 +1127,25 @@ class Scheduler(BrokerModule):
         try:
             mod = importlib.import_module(module_name)
             cls = getattr(mod, cls_name) if cls_name else mod.pool_class
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError) as e:
+            import sys
+            import traceback
+            import syslog
+            # Brief error at LOG_ERR for operators
+            self.log(
+                syslog.LOG_ERR,
+                f"Failed to load pool class '{uri}': {str(e)}"
+            )
+            # Full traceback at LOG_DEBUG for developers
+            exc_info = sys.exc_info()
+            tb_lines = traceback.format_exception(*exc_info)
+            error_detail = ''.join(tb_lines).rstrip()
+            self.log(
+                syslog.LOG_DEBUG,
+                f"Pool class load traceback:\n{error_detail}"
+            )
+            # Store a brief error for the exception message
+            self._last_pool_load_error = str(e)
             return None
         self._uri_class_cache[uri] = cls
         return cls

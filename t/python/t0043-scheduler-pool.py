@@ -86,9 +86,21 @@ class TestPoolClassFromUri(unittest.TestCase):
         """Unresolvable module URI returns None without raising."""
         self.assertIsNone(self.sched._pool_class_from_uri("no_such_module_xyz"))
 
+    def test_missing_module_stores_error(self):
+        """Unresolvable module URI stores error detail in _last_pool_load_error."""
+        self.sched._pool_class_from_uri("no_such_module_xyz")
+        self.assertTrue(hasattr(self.sched, "_last_pool_load_error"))
+        self.assertIn("No module named", self.sched._last_pool_load_error)
+
     def test_module_without_pool_class_attr_returns_none(self):
         """Module that exists but lacks pool_class returns None."""
         self.assertIsNone(self.sched._pool_class_from_uri("json"))
+
+    def test_module_without_pool_class_attr_stores_error(self):
+        """Module without pool_class stores AttributeError in _last_pool_load_error."""
+        self.sched._pool_class_from_uri("json")
+        self.assertTrue(hasattr(self.sched, "_last_pool_load_error"))
+        self.assertIn("pool_class", self.sched._last_pool_load_error)
 
     def test_module_uri_pool_class_attr(self):
         """Plain module URI loads pool_class attribute from the module."""
