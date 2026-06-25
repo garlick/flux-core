@@ -726,10 +726,8 @@ json_t *rhwloc_scheduling_treepool (hwloc_topology_t topo,
                                     const char *ranks,
                                     flux_error_t *errp)
 {
-    json_t *topo_obj = NULL;
-    json_t *entry = NULL;
-    json_t *children = NULL;
-    json_t *result = NULL;
+    json_t *topo_obj;
+    json_t *result;
 
     if (!topo || !ranks) {
         errno = EINVAL;
@@ -739,44 +737,19 @@ json_t *rhwloc_scheduling_treepool (hwloc_topology_t topo,
     if (!(topo_obj = build_treepool_topo (topo, errp)))
         return NULL;
 
-    if (!(entry = json_pack ("{s:s, s:O}",
-                             "ranks", ranks,
-                             "topo", topo_obj))) {
-        errprintf (errp, "failed to create children entry");
-        errno = ENOMEM;
-        goto error;
-    }
-
-    if (!(children = json_array ())) {
-        errprintf (errp, "failed to create children array");
-        errno = ENOMEM;
-        goto error;
-    }
-
-    if (json_array_append_new (children, entry) < 0) {
-        errprintf (errp, "failed to append entry to children");
-        errno = ENOMEM;
-        goto error;
-    }
-    entry = NULL; /* owned by children */
-
-    if (!(result = json_pack ("{s:s, s:o}",
+    if (!(result = json_pack ("{s:s, s:[{s:s s:O}]}",
                               "writer", "TreePool",
-                              "children", children))) {
+                              "children",
+                                "ranks", ranks,
+                                "topo", topo_obj))) {
         errprintf (errp, "failed to create scheduling object");
+        json_decref (topo_obj);
         errno = ENOMEM;
-        goto error;
+        return NULL;
     }
-    children = NULL; /* owned by result */
 
-    ERRNO_SAFE_WRAP (json_decref, topo_obj);
+    json_decref (topo_obj);
     return result;
-
-error:
-    ERRNO_SAFE_WRAP (json_decref, topo_obj);
-    ERRNO_SAFE_WRAP (json_decref, entry);
-    ERRNO_SAFE_WRAP (json_decref, children);
-    return NULL;
 }
 
 /* vi: ts=4 sw=4 expandtab
