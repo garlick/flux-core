@@ -376,8 +376,19 @@ void test_basic_topologies (void)
     hwloc_topology_destroy (topo);
     ok (result != NULL,
         "GPU topology returns non-NULL");
+    if (result) {
+        char *debug_result = json_dumps (result, JSON_INDENT(2));
+        diag ("full result JSON:\n%s", debug_result);
+        free (debug_result);
+    }
     t = scheduling_topo (result);
+    if (t) {
+        char *debug_topo = json_dumps (t, JSON_INDENT(2));
+        diag ("topo object:\n%s", debug_topo);
+        free (debug_topo);
+    }
     s = json_string_value (json_object_get (t, "gpus"));
+    diag ("topo.gpus = %s", s ? s : "NULL");
     ok (s && strcmp (s, "0") == 0,
         "GPU topology topo.gpus == \"0\"");
     ok (json_integer_value (json_object_get (t, "memory")) == 8,
