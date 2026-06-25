@@ -369,7 +369,10 @@ void test_basic_topologies (void)
         "no-pkg topo.numa[1].memory == 4");
     json_decref (result);
 
-    /* GPU under NUMANode: single socket collapses, gpus at topo level */
+    /* GPU at Machine level (hwloc 2.x I/O placement): single socket collapses,
+     * GPU assigned to NUMA via cpuset matching. Tests gpu_belongs_to_obj()
+     * fallback path for I/O devices not in CPU object parent chain.
+     */
     topo = rhwloc_xml_topology_load (xml_nps1_gpu, RHWLOC_NO_RESTRICT);
     if (!topo)
         BAIL_OUT ("failed to load xml_nps1_gpu topology");
