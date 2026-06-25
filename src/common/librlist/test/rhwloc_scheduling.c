@@ -268,7 +268,8 @@ static const char xml_nps1_gpu[] = "\
           <object type=\"PCIDev\" os_index=\"0\"\
  pci_busid=\"0000:01:00.0\">\n\
             <info name=\"PCIVendor\" value=\"NVIDIA\"/>\n\
-            <object type=\"OSDev\" os_index=\"0\" osdev_type=\"1\">\n\
+            <object type=\"OSDev\" name=\"cuda0\" osdev_type=\"5\">\n\
+              <info name=\"CoProcType\" value=\"CUDA\"/>\n\
               <info name=\"Backend\" value=\"CUDA\"/>\n\
               <info name=\"GPUVendor\" value=\"NVIDIA\"/>\n\
             </object>\n\
