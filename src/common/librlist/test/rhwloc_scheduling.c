@@ -264,16 +264,16 @@ static const char xml_nps1_gpu[] = "\
  nodeset=\"0x00000001\" complete_nodeset=\"0x00000001\"\
  allowed_nodeset=\"0x00000001\"/>\n\
         </object>\n\
-        <object type=\"Bridge\" os_index=\"0\" bridge_type=\"1-1\">\n\
-          <object type=\"PCIDev\" os_index=\"0\"\
- pci_busid=\"0000:01:00.0\">\n\
-            <info name=\"PCIVendor\" value=\"NVIDIA\"/>\n\
-            <object type=\"OSDev\" name=\"cuda0\" osdev_type=\"5\">\n\
-              <info name=\"CoProcType\" value=\"CUDA\"/>\n\
-              <info name=\"Backend\" value=\"CUDA\"/>\n\
-              <info name=\"GPUVendor\" value=\"NVIDIA\"/>\n\
-            </object>\n\
-          </object>\n\
+      </object>\n\
+    </object>\n\
+    <object type=\"Bridge\" os_index=\"0\" bridge_type=\"0-1\" depth=\"0\"\
+ bridge_pci=\"0000:[00-01]\">\n\
+      <object type=\"PCIDev\" os_index=\"4096\" name=\"Test GPU 0\"\
+ pci_busid=\"0000:01:00.0\" pci_type=\"0302 [10de:1234] [10de:0000] a1\"\
+ pci_link_speed=\"0.000000\">\n\
+        <object type=\"OSDev\" name=\"cuda0\" osdev_type=\"5\">\n\
+          <info name=\"CoProcType\" value=\"CUDA\"/>\n\
+          <info name=\"Backend\" value=\"CUDA\"/>\n\
         </object>\n\
       </object>\n\
     </object>\n\
