@@ -372,6 +372,13 @@ void test_basic_topologies (void)
     topo = rhwloc_xml_topology_load (xml_nps1_gpu, RHWLOC_NO_RESTRICT);
     if (!topo)
         BAIL_OUT ("failed to load xml_nps1_gpu topology");
+    /* Check how many GPUs hwloc finds in the topology */
+    {
+        int ngpus = 0;
+        hwloc_obj_t *gpus = rhwloc_gpu_objects (topo, &ngpus);
+        diag ("rhwloc_gpu_objects found %d GPU(s) in xml_nps1_gpu", ngpus);
+        free (gpus);
+    }
     result = rhwloc_scheduling (topo, "TreePool", "0", NULL);
     hwloc_topology_destroy (topo);
     ok (result != NULL,
