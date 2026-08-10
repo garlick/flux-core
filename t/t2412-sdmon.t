@@ -17,8 +17,8 @@ if ! busctl --user status >/dev/null; then
 	skip_all="user dbus is not running"
 	test_done
 fi
-if ! busctl status >/dev/null; then
-	skip_all="system dbus is not running"
+if ! command -v systemd-run >/dev/null; then
+	skip_all="systemd-run is not available"
 	test_done
 fi
 
@@ -26,19 +26,23 @@ test_under_flux 1 minimal -Slog-stderr-level=1
 
 testname="t2412-$$"
 
-# Usage: start test unit NAME (without service suffix)
-start_test_unit() {
+# sdmon monitors the *system* systemd instance (housekeeping/prolog/epilog),
+# matching the glob flux-*.  Rather than create real system units (which needs
+# privilege), point the "sdbus-sys" bridge at the *user* bus so a flux-prolog-*
+# unit started with systemd-run --user is what sdmon sees as a system unit.
+# That bus is shared with other tests running in parallel, so unit names carry
+# a unique per-run suffix and sdmon monitoring is narrowed to it (sys_glob).
+
+# Usage: start_sys_unit NAME (without .service suffix)
+start_sys_unit() {
 	local sleep=$(which sleep)
-	flux exec \
-	    --service sdexec \
-	    --setopt SDEXEC_NAME="$1.service" \
-	    $sleep 3600 &
+	systemd-run --user --unit="$1.service" --service-type=simple $sleep 3600
 }
-# Usage: stop_test_unit NAME (without service suffix)
-stop_test_unit() {
+# Usage: stop_sys_unit NAME (without .service suffix)
+stop_sys_unit() {
 	systemctl --user stop $1
 }
-reset_test_unit() {
+reset_sys_unit() {
 	systemctl --user reset-failed $1
 }
 
@@ -54,95 +58,109 @@ wait_for_none() {
 # Usage: wait_for_some MAXSEC
 wait_for_some() {
 	local retry=$(($1*10))
-	while flux module stats sdmon | jq -e ".units == []"; do
+	while ! flux module stats sdmon | jq -e ".units != []"; do
 	    sleep 0.1
 	    retry=$(($retry-1))
 	    test $retry -gt 0 || exit 1
 	done
 }
 
-# Usage: bus_reconnect service
-bus_reconnect() {
-    local service=$1
-    flux python -c "import flux; flux.Flux().rpc(\"$1.reconnect\",{}).get()"
-}
+# sdmon learns the user-bus state by sending sdexec.clean-wait, retrying
+# while sdexec is not loaded.  Loading sdexec (whose sweep finds no leftover
+# units in this test instance) is what clears the user-bus gate below.
 
 groups="flux python ${SHARNESS_TEST_SRCDIR}/scripts/groups.py"
 
-test_expect_success 'load sdbus,sdexec modules' '
-	flux module load --name sdbus-sys sdbus system &&
-	flux module load sdbus &&
-	flux module load sdexec
+# The prolog-like system unit must exist before sdmon starts so its initial
+# list picks it up and the node begins offline.
+prolog="flux-prolog-${testname}"
+
+test_expect_success 'enable sdbus-debug in configuration' '
+	flux config load <<-EOT
+	[systemd]
+	sdbus-debug = true
+	EOT
+'
+# Load the "sdbus-sys" bridge on the user bus (no "system" arg) so this
+# unprivileged test can create the flux-* units sdmon expects on the system bus.
+test_expect_success 'load sdbus-sys bridge (on the user bus for testing)' '
+	flux module load --name sdbus-sys sdbus
+'
+test_expect_success 'seed a running system unit before sdmon starts' '
+	start_sys_unit "$prolog" &&
+	systemctl --user is-active "${prolog}.service"
 '
 test_expect_success 'load sdmon module' '
-	flux module load sdmon usr_glob="*shell-${testname}*"
+	flux module load sdmon sys_glob="flux-*-${testname}*"
 '
-test_expect_success 'wait for it to join the sdmon.online group' '
-	run_timeout 30 $groups waitfor --count=1 sdmon.online
+test_expect_success 'sdmon lists the running system unit' '
+	wait_for_some 30 &&
+	flux module stats sdmon | jq -e \
+	    "[.units[].name] | index(\"${prolog}.service\") != null"
 '
-test_expect_success 'module stats units array is empty' '
-	flux module stats sdmon | jq -e ".units == []"
+# The node stays offline until BOTH gates clear: system units drained and
+# sdexec answering that the user bus is clean.  Without sdexec loaded, the
+# clean-wait request is retried and the user-bus gate stays closed.
+test_expect_success 'draining system units alone does not bring it online' '
+	stop_sys_unit "$prolog" &&
+	wait_for_none 30 &&
+	test -z "$($groups get sdmon.online)"
 '
-test_expect_success 'run a systemd unit with imp-shell- prefix' '
-	start_test_unit imp-shell-${testname}
-'
-test_expect_success 'wait for module stats to show test unit' '
+test_expect_success 'seed a running system unit again' '
+	start_sys_unit "$prolog" &&
 	wait_for_some 30
 '
-test_expect_success 'remove sdmon module' '
-	flux module remove sdmon
+# Load sdbus and sdexec: the sweep finds no leftovers, so sdexec answers
+# sdmon's next clean-wait retry, but the running system unit still blocks.
+test_expect_success 'clean user bus alone does not bring the node online' '
+	flux module load sdbus &&
+	flux module load sdexec &&
+	test -z "$($groups get sdmon.online)"
 '
-# removing the module triggers a disconnect that causes a group leave
-test_expect_success 'wait for it to leave the sdmon.online group' '
+# With the system units drained AND the user bus clean, sdmon joins online.
+test_expect_success 'node comes online once both gates clear' '
+	stop_sys_unit "$prolog" &&
+	wait_for_none 30 &&
+	run_timeout 30 $groups waitfor --count=1 sdmon.online
+'
+# Reloading sdmon alone must rejoin: the reloaded module re-learns the
+# user-bus state by re-sending clean-wait rather than wedging the node
+# offline awaiting a signal that was already consumed.
+test_expect_success 'reloading sdmon alone rejoins the online group' '
+	flux module reload sdmon sys_glob="flux-*-${testname}*" &&
+	run_timeout 30 $groups waitfor --count=1 sdmon.online
+'
+# Removing sdmon disconnects it, which leaves the group.
+test_expect_success 'removing sdmon leaves the online group' '
+	flux module remove sdmon &&
 	run_timeout 30 $groups waitfor --count=0 sdmon.online
 '
-test_expect_success 'load sdmon module' '
-	flux module load sdmon
-'
-test_expect_success 'wait for module stats to show test unit' '
-	wait_for_some 30
-'
-test_expect_success 'stop the unit' '
-	stop_test_unit imp-shell-${testname}
-'
-test_expect_success 'wait for sdmon to join the sdmon.online group' '
+# A unit that appears after sdmon is online (via a property update, not the
+# initial list) is still tracked.
+test_expect_success 'reload clean and confirm online' '
+	flux module load sdmon sys_glob="flux-*-${testname}*" &&
 	run_timeout 30 $groups waitfor --count=1 sdmon.online
 '
-test_expect_success 'run a systemd unit with shell- prefix' '
-	start_test_unit shell-${testname}
-'
-test_expect_success 'wait for module stats to show test unit' '
+test_expect_success 'a unit appearing later is tracked' '
+	start_sys_unit "$prolog" &&
 	wait_for_some 30
 '
-test_expect_success 'stop the unit' '
-	stop_test_unit shell-${testname}
-'
-test_expect_success 'wait for module stats stop showing test unit' '
+test_expect_success 'and drops from the list when it stops' '
+	stop_sys_unit "$prolog" &&
 	wait_for_none 30
 '
-test_expect_success 'force sdbus to reconnect to d-bus' '
-	bus_reconnect sdbus
+test_expect_success 'sdmon rejects an unknown module option' '
+	flux module remove sdmon &&
+	test_must_fail flux module load sdmon unknown
 '
-test_expect_success 'run a systemd unit and wait for it to appear' '
-	start_test_unit shell-${testname} &&
-	wait_for_some 30
-'
-test_expect_success 'stop the unit and wait for it to vanish' '
-	stop_test_unit shell-${testname} &&
-	wait_for_none 30
-'
-test_expect_success 'remove sdmon module' '
-	flux module remove sdmon
-'
-test_expect_success 'remove sdexec,sdbus modules' '
+test_expect_success 'remove modules' '
+	flux module remove sdmon 2>/dev/null || true &&
 	flux module remove sdexec &&
 	flux module remove sdbus &&
 	flux module remove sdbus-sys
 '
 test_expect_success 'clean up any residual test units' '
-	stop_test_unit shell-${testname} || true &&
-	stop_test_unit imp-shell-${testname} || true &&
-	reset_test_unit shell-${testname} || true &&
-	reset_test_unit imp-shell-${testname} || true
+	stop_sys_unit "$prolog" 2>/dev/null || true &&
+	reset_sys_unit "$prolog" 2>/dev/null || true
 '
 test_done
