@@ -538,6 +538,54 @@ done:
     return rc;
 }
 
+/* Enumerate the canonical empty-directory blob as a permanent root.
+ *
+ * The empty RFC 11 dir object is the rootref of every freshly created KVS
+ * namespace (see flux_kvs_namespace_create(), which references it WITHOUT
+ * storing it, relying on the KVS having stored it once at startup via
+ * store_initial_rootdir()).  On a busy instance no live-tree directory and no
+ * retained checkpoint references an empty dir, so the blob is reachable from
+ * none of the roots above and a sweep would reclaim it -- after which the next
+ * fresh namespace creation faults with ENOENT loading its own (now missing)
+ * root.  Offline gc had the same hazard but a KVS restart re-created the blob;
+ * online gc has no restart, so it must protect the blob itself.
+ *
+ * The blobref is computed exactly as flux_kvs_namespace_create() does (hash of
+ * the encoded empty dir treeobj under the instance's content.hash), so no KVS
+ * round-trip is needed.  Marking it as a root is enough: an empty dir has no
+ * children, so the subtree walk is trivial.
+ */
+static int enumerate_empty_dir_root (flux_t *h, json_t *roots_array)
+{
+    const char *hash_name;
+    json_t *dir = NULL;
+    char *data = NULL;
+    char blobref[BLOBREF_MAX_STRING_SIZE];
+    json_t *root_str;
+    int rc = -1;
+
+    if (!(hash_name = flux_attr_get (h, "content.hash")))
+        return -1;
+    if (!(dir = treeobj_create_dir ())
+        || !(data = treeobj_encode (dir)))
+        goto done;
+    if (blobref_hash (hash_name, data, strlen (data), blobref, sizeof (blobref))
+        < 0)
+        goto done;
+    if (!(root_str = json_string (blobref))
+        || json_array_append_new (roots_array, root_str) < 0) {
+        errno = ENOMEM;
+        goto done;
+    }
+    if (verbose)
+        log_msg ("enumerated empty-dir root %s", blobref);
+    rc = 0;
+done:
+    free (data);
+    json_decref (dir);
+    return rc;
+}
+
 /* Flush the final partial batch and wait for every outstanding mark RPC to
  * complete.  Called once, after all roots have been walked; the walk itself
  * cannot drain because mark_reap must not stop the reactor mid-walk.
@@ -711,6 +759,12 @@ int cmd_gc (optparse_t *p, int argc, char **argv)
      */
     if (enumerate_primary_live_root (h, roots) < 0)
         log_err_exit ("failed to enumerate live primary root");
+
+    /* The empty-dir blob (root of every fresh namespace) is referenced by
+     * none of the above once startup empty-dirs age out; protect it always.
+     */
+    if (enumerate_empty_dir_root (h, roots) < 0)
+        log_err_exit ("failed to enumerate empty-dir root");
 
     if (verbose)
         log_msg ("enumerated %zu total roots", json_array_size (roots));
