@@ -77,6 +77,9 @@ struct sdexec_ctx {
     flux_msg_handler_t **handlers;
     zlistx_t *procs; // list of struct sdproc, owned by the module
     struct flux_msglist *kills;
+    int recover_pending;   // recovered procs awaiting their GetAll snapshot
+    // parked sdexec.clean-wait requests (see clean_wait_cb)
+    struct flux_msglist *clean_requests;
 };
 
 enum stop_timer_state {
@@ -372,6 +375,111 @@ static void sdproc_log_exit (struct sdproc *proc, int status)
     else
         flux_log (h, LOG_INFO, "%s[%d]: Exit %d",
                   name, pid, WEXITSTATUS (status));
+}
+
+/* True if a unit is running (not yet reaped) for the purpose of the clean
+ * decision below.
+ */
+static bool sdproc_is_running (struct sdproc *proc)
+{
+    switch (sdexec_unit_state (proc->unit)) {
+        case STATE_ACTIVATING:
+        case STATE_ACTIVE:
+        case STATE_DEACTIVATING:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* True if this proc keeps the user bus from being declared clean: a leftover
+ * unit adopted at startup that is still running and that no client has
+ * reclaimed with a wait request.  A freshly-started proc (recovered == 0) is
+ * this instance's own doing and never blocks; a reclaimed unit (waiter set)
+ * stops blocking, so the node comes online while the legitimate job keeps
+ * running; a true orphan blocks until it exits on its own.
+ */
+static bool sdproc_blocks_clean (struct sdproc *proc)
+{
+    return proc->recovered && sdproc_is_running (proc) && proc->waiter == NULL;
+}
+
+static int authorize_request (const flux_msg_t *msg,
+                              uint32_t rank,
+                              flux_error_t *error);
+
+/* True if the user bus has no un-reclaimed orphan: the startup sweep
+ * completes before module load does, so the orphan set is always known;
+ * recover_pending defers the decision while adopted units await their
+ * GetAll snapshots.
+ */
+static bool user_bus_is_clean (struct sdexec_ctx *ctx)
+{
+    struct sdproc *proc;
+
+    if (ctx->recover_pending > 0)
+        return false;
+    proc = zlistx_first (ctx->procs);
+    while (proc) {
+        if (sdproc_blocks_clean (proc))
+            return false;
+        proc = zlistx_next (ctx->procs);
+    }
+    return true;
+}
+
+/* Answer parked sdexec.clean-wait requests (see clean_wait_cb()) once the
+ * user bus has no un-reclaimed orphan, so sdmon may complete its transition
+ * to online.  Cleanliness is level-triggered: once true it stays true, since
+ * only the startup sweep creates blocking procs.  Call after any event that
+ * could clear the last blocker: sweep completion, a recovered proc's reap,
+ * and a wait that attaches a waiter.
+ */
+static void respond_clean_if_ready (struct sdexec_ctx *ctx)
+{
+    const flux_msg_t *msg;
+
+    if (flux_msglist_count (ctx->clean_requests) == 0
+        || !user_bus_is_clean (ctx))
+        return;
+    while ((msg = flux_msglist_pop (ctx->clean_requests))) {
+        if (flux_respond (ctx->h, msg, NULL) < 0)
+            flux_log_error (ctx->h, "error responding to clean-wait request");
+        flux_msg_decref (msg);
+    }
+}
+
+/* Handle an sdexec.clean-wait request: respond when the user bus has no
+ * un-reclaimed orphan, now if that is already true, otherwise when the last
+ * blocker clears.  sdmon polls this to gate the node's transition to online,
+ * re-sending if sdexec is not loaded yet or reloads, so cleanliness is owned
+ * here (where the sweep is) while the requester owns recovery from either
+ * module restarting.
+ */
+static void clean_wait_cb (flux_t *h,
+                           flux_msg_handler_t *mh,
+                           const flux_msg_t *msg,
+                           void *arg)
+{
+    struct sdexec_ctx *ctx = arg;
+    flux_error_t error;
+    const char *errstr = NULL;
+
+    if (authorize_request (msg, ctx->rank, &error) < 0) {
+        errstr = error.text;
+        goto error;
+    }
+    if (user_bus_is_clean (ctx)) {
+        if (flux_respond (h, msg, NULL) < 0)
+            flux_log_error (h, "error responding to clean-wait request");
+        return;
+    }
+    if (flux_msglist_append (ctx->clean_requests, msg) < 0)
+        goto error;
+    return;
+error:
+    if (flux_respond_error (h, msg, errno, errstr) < 0)
+        flux_log_error (h, "error responding to clean-wait request");
 }
 
 /* Send the streaming response IFF unit cleanup is complete and EOFs have
@@ -751,6 +859,7 @@ static void sdproc_advance_state (struct sdproc *proc)
 static void property_changed_continuation (flux_future_t *f, void *arg)
 {
     struct sdproc *proc = arg;
+    struct sdexec_ctx *ctx = proc->ctx;
     json_t *properties;
 
     if (!(properties = sdexec_property_changed_dict (f))) {
@@ -766,6 +875,11 @@ static void property_changed_continuation (flux_future_t *f, void *arg)
     /* Conditionally send the final RPC response.
      */
     finalize_exec_request_if_done (proc);
+    /* A recovered orphan exiting on its own can clear the last blocker to the
+     * user-bus clean decision.  proc may have been freed by finalize above;
+     * use ctx only from here.
+     */
+    respond_clean_if_ready (ctx);
 }
 
 /* StartTransientUnit reply does not normally generate a sdexec.exec response,
@@ -1841,6 +1955,11 @@ static void wait_cb (flux_t *h,
     sdproc_wait_notify (proc);
     if (!sdproc_is_waitable (proc)) // answered above
         zlistx_delete (ctx->procs, proc->list_handle);
+    /* Reclaiming a recovered orphan (attaching a waiter, or collecting a
+     * finished one just now) can clear the last blocker to the user-bus clean
+     * decision.
+     */
+    respond_clean_if_ready (ctx);
     return;
 error:
     if (flux_respond_error (h, msg, errno, errstr) < 0)
@@ -2028,6 +2147,8 @@ static void disconnect_cb (flux_t *h,
         }
         proc = zlistx_next (ctx->procs);
     }
+    /* Drop any parked clean-wait request from this client. */
+    (void)flux_msglist_disconnect (ctx->clean_requests, msg);
 }
 
 /* N.B. systemd.enable is checked in rc1 and ignored here since
@@ -2118,6 +2239,11 @@ static struct flux_msg_handler_spec htab[] = {
       0
     },
     { FLUX_MSGTYPE_REQUEST,
+      "clean-wait",
+      clean_wait_cb,
+      0
+    },
+    { FLUX_MSGTYPE_REQUEST,
       "stats-get",
       stats_cb,
       0
@@ -2160,6 +2286,22 @@ static void sdexec_ctx_destroy (struct sdexec_ctx *ctx)
             }
             zlistx_destroy (&ctx->procs);
         }
+        if (ctx->clean_requests) {
+            const flux_msg_t *msg;
+            /* Fail parked clean-wait requests so sdmon can retry against
+             * the next incarnation of this module.
+             */
+            while ((msg = flux_msglist_pop (ctx->clean_requests))) {
+                if (flux_respond_error (ctx->h,
+                                        msg,
+                                        ENOSYS,
+                                        "sdexec module is unloading") < 0)
+                    flux_log_error (ctx->h,
+                                    "error responding to clean-wait request");
+                flux_msg_decref (msg);
+            }
+        }
+        flux_msglist_destroy (ctx->clean_requests);
         flux_msglist_destroy (ctx->kills);
         free (ctx->local_uri);
         free (ctx->instance_name);
@@ -2265,7 +2407,8 @@ static struct sdexec_ctx *sdexec_ctx_create (flux_t *h)
     if (!(ctx->sweep_suffix = sweep_suffix (ctx)))
         goto error;
     if (!(ctx->procs = zlistx_new ())
-        || !(ctx->kills = flux_msglist_create ()))
+        || !(ctx->kills = flux_msglist_create ())
+        || !(ctx->clean_requests = flux_msglist_create ()))
         goto error;
     zlistx_set_destructor (ctx->procs, sdproc_destructor);
     return ctx;
@@ -2339,6 +2482,8 @@ static void recover_probe_continuation (flux_future_t *f, void *arg)
     flux_future_destroy (f);
     if (found)
         proc->f_map = NULL; // proc destroyed above when !found
+    ctx->recover_pending--;
+    respond_clean_if_ready (ctx);
 }
 
 /* A recovered unit's GetAll snapshot has arrived.  Feed it to the unit object
@@ -2372,7 +2517,8 @@ static void sweep_getall_continuation (flux_future_t *f, void *arg)
     flux_future_destroy (f);
     proc->f_map = NULL;
     /* On GetAll failure, probe whether the unit still exists before deciding
-     * its fate (see recover_probe_continuation()).
+     * its fate (see recover_probe_continuation()).  recover_pending remains
+     * held until the probe resolves.
      */
     if (!dict) {
         if (!(proc->f_map = sdexec_list_units (h,
@@ -2388,6 +2534,12 @@ static void sweep_getall_continuation (flux_future_t *f, void *arg)
                             sdexec_unit_name (proc->unit));
             flux_future_destroy (proc->f_map);
             proc->f_map = NULL;
+            /* Keep the proc as seeded: if it is running it blocks the clean
+             * decision, which is the safe direction when its state cannot
+             * be confirmed.
+             */
+            ctx->recover_pending--;
+            respond_clean_if_ready (ctx);
         }
         return;
     }
@@ -2395,6 +2547,12 @@ static void sweep_getall_continuation (flux_future_t *f, void *arg)
     sdproc_advance_state (proc);
     finalize_exec_request_if_done (proc);
     json_decref (dict);
+    /* This snapshot resolved: one fewer recovered proc pending, so the clean
+     * decision may now be able to proceed (see respond_clean_if_ready()).
+     * proc may have been freed by finalize above; use ctx only from here.
+     */
+    ctx->recover_pending--;
+    respond_clean_if_ready (ctx);
 }
 
 /* Adopt one leftover unit: create a recovered sdproc, seed its state from the
@@ -2443,6 +2601,10 @@ static void recover_unit (struct sdexec_ctx *ctx, struct unit_info *info)
         zlistx_delete (ctx->procs, proc->list_handle);
         return;
     }
+    /* Defer the clean decision until this unit's GetAll snapshot resolves its
+     * running-vs-exited state (see respond_clean_if_ready()).
+     */
+    ctx->recover_pending++;
     flux_log (ctx->h, LOG_INFO, "recovering %s", name);
 }
 
@@ -2541,6 +2703,11 @@ static int sweep_units (struct sdexec_ctx *ctx, flux_error_t *error)
         recover_unit (ctx, &info);
     }
     flux_future_destroy (f);
+    /* The full orphan set is now known.  If nothing was adopted, or every
+     * adopted unit's snapshot already resolved without blocking, this sends
+     * the clean signal now; otherwise the last GetAll continuation does.
+     */
+    respond_clean_if_ready (ctx);
     free (glob);
     return 0;
 error:
