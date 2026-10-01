@@ -1426,8 +1426,10 @@ error:
  * channel is treated as being at EOF by the finalize gate
  * (finalize_exec_request_if_done()), and both response-sent flags are pre-set
  * so the state machine (sdproc_advance_state()) never tries to respond on the
- * absent request.  The proc is background and waitable so job-exec can reclaim
- * it by label with a wait request; the label is the unit name minus the
+ * absent request.  The proc is background and provisionally waitable so
+ * job-exec can reclaim it by label with a wait request; if the GetAll
+ * snapshot shows the unit was not started waitable, it is downgraded
+ * (see sweep_getall_continuation()).  The label is the unit name minus the
  * ".service" suffix, matching the name job-exec used to start it (bulk-exec.c).
  * Output cannot be recovered, so a later wait returns status only.
  */
@@ -1746,6 +1748,16 @@ static void exec_cb (flux_t *h,
     if (!(proc = sdproc_create (ctx, cmd, flags, background)))
         goto error;
     proc->waitable = waitable;
+    /* Stamp waitable-ness into the unit environment so a later startup sweep
+     * can distinguish a leftover unit whose status a client will reclaim
+     * from one that nobody will ever wait on (see recover_unit()).
+     */
+    if (waitable
+        && set_dict (proc->cmd, "env", "FLUX_SDEXEC_WAITABLE", "1") < 0) {
+        sdproc_destroy (proc);
+        errno = ENOMEM;
+        goto error;
+    }
     /* The sdproc is owned by ctx->procs and holds its own reference to the
      * exec request message, so it outlives this callback.  Insert it into the
      * list first; on any later failure exec_respond_error() removes it (which
@@ -2535,6 +2547,25 @@ static void recover_probe_continuation (flux_future_t *f, void *arg)
  * a still-running unit is left to its per-unit watch (installed before this
  * request was sent).  The future is a one-shot, freed here.
  */
+/* True if the unit was started with the waitable marker in its environment
+ * (see exec_cb()).  Absence means no client will ever wait on this unit.
+ */
+static bool unit_is_marked_waitable (json_t *dict)
+{
+    json_t *env;
+    size_t index;
+    json_t *entry;
+
+    if (sdexec_property_dict_read (dict, "Environment", "as", &env) == 0) {
+        json_array_foreach (env, index, entry) {
+            const char *s = json_string_value (entry);
+            if (s && streq (s, "FLUX_SDEXEC_WAITABLE=1"))
+                return true;
+        }
+    }
+    return false;
+}
+
 static void sweep_getall_continuation (flux_future_t *f, void *arg)
 {
     struct sdproc *proc = arg;
@@ -2586,6 +2617,16 @@ static void sweep_getall_continuation (flux_future_t *f, void *arg)
         }
         return;
     }
+    /* A recovered proc is created waitable so a client can reclaim it by
+     * label, but a unit that was not started waitable has no reclaiming
+     * client: downgrade it so it is reaped when it exits (or now, if it
+     * already has) rather than held for a wait that will never come.
+     * A waiter that attached between module load and this snapshot
+     * inhibits the downgrade, which would orphan the parked wait: an
+     * attached waiter is a reclaiming client, marker or not.
+     */
+    if (!unit_is_marked_waitable (dict) && proc->waiter == NULL)
+        proc->waitable = 0;
     (void)sdexec_unit_update (proc->unit, dict);
     sdproc_advance_state (proc);
     finalize_exec_request_if_done (proc);
