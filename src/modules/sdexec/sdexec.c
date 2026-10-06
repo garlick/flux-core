@@ -2054,8 +2054,8 @@ static void list_cb (flux_t *h,
          */
         state = sdexec_unit_has_finished (proc->unit) ? "Z" : "R";
         (void)json_unpack (proc->cmd, "{s:s}", "label", &label);
-        /* A recovered proc has no cmdline (only a label), so fall back to the
-         * unit name for the "cmd" field rather than omitting the entry.
+        /* If the cmdline is unavailable, fall back to the unit name.
+         * This can occur if ExecStart parsing failed during recovery.
          */
         if (json_unpack (proc->cmd, "{s:[s]}", "cmdline", &arg0) < 0)
             arg0 = sdexec_unit_name (proc->unit);
@@ -2566,6 +2566,29 @@ static bool unit_is_marked_waitable (json_t *dict)
     return false;
 }
 
+/* Extract the cmdline array from the ExecStart property returned by GetAll.
+ * The readable ExecStart property has D-Bus type a(sasbttttuii): an array
+ * of (path, argv, ignore_errors, ...) structs with trailing status fields.
+ * Assume a single command (the first struct) and extract its argv, member 1.
+ * Returns a new json array reference on success, NULL on failure.
+ */
+static json_t *extract_cmdline_from_execstart (json_t *dict)
+{
+    json_t *execstart;
+    json_t *cmdline;
+
+    if (sdexec_property_dict_read (dict,
+                                   "ExecStart",
+                                   "a(sasbttttuii)",
+                                   &execstart) < 0)
+        return NULL;
+    if (json_array_size (execstart) == 0
+        || !(cmdline = json_array_get (json_array_get (execstart, 0), 1))
+        || !json_is_array (cmdline))
+        return NULL;
+    return json_incref (cmdline);
+}
+
 static void sweep_getall_continuation (flux_future_t *f, void *arg)
 {
     struct sdproc *proc = arg;
@@ -2627,6 +2650,25 @@ static void sweep_getall_continuation (flux_future_t *f, void *arg)
      */
     if (!unit_is_marked_waitable (dict) && proc->waiter == NULL)
         proc->waitable = 0;
+    /* Try to extract the actual command line from ExecStart so logs and ps
+     * show the real command instead of the unit name.  If ExecStart is not
+     * available or cannot be parsed, the label (unit name minus suffix)
+     * remains as the fallback.
+     */
+    json_t *cmdline = extract_cmdline_from_execstart (dict);
+    if (cmdline) {
+        json_t *new_cmd;
+        const char *label;
+        /* Preserve the label and add the cmdline array */
+        if (json_unpack (proc->cmd, "{s:s}", "label", &label) == 0
+            && (new_cmd = json_pack ("{s:s s:O}",
+                                     "label", label,
+                                     "cmdline", cmdline))) {
+            json_decref (proc->cmd);
+            proc->cmd = new_cmd;
+        }
+        json_decref (cmdline);
+    }
     (void)sdexec_unit_update (proc->unit, dict);
     sdproc_advance_state (proc);
     finalize_exec_request_if_done (proc);
