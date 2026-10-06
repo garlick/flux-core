@@ -86,14 +86,13 @@ test_expect_success 'load sdbus-sys,sdbus,sdmon,sdexec modules' '
 	flux module load sdexec
 '
 # The startup sweep adopts the running orphan as a recovered proc, listed with
-# its label and unit name (a recovered proc has no cmdline, so the command
-# column falls back to the unit name).
+# its label and recovered command line (extracted from ExecStart).
 test_expect_success 'sweep recovers the orphan into ps' '
 	wait_for_ps_state "$orphan" R &&
 	$ps -r 0 >orphan-ps.out &&
 	test_debug "cat orphan-ps.out" &&
 	grep "$orphan" orphan-ps.out &&
-	$ps -r 0 -no "{cmd}" | grep "${ounit}.service"
+	$ps -r 0 -no "{cmd}" | grep "^$sleep$"
 '
 # An un-reclaimed running orphan holds the user bus dirty, so sdexec never
 # signals sdmon and the node stays out of the online group (an empty member
@@ -118,7 +117,7 @@ test_expect_success 'reloaded sdexec recovers the unit under its label' '
 	$ps -r 0 >recov-ps.out &&
 	test_debug "cat recov-ps.out" &&
 	grep "$recov" recov-ps.out &&
-	$ps -r 0 -no "{cmd}" | grep "${recov}-0:${iname}.service"
+	$ps -r 0 -no "{cmd}" | grep "^$sleep$"
 '
 # The recovered unit is still running, so a wait parks until it is reaped.  Its
 # stdio channels died with the old module, so no output can be retained: a
