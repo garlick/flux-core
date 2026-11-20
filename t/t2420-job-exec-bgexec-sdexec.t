@@ -47,6 +47,7 @@ service = "sdexec"
 EOT
 
 test_under_flux 2 full --config-path=$(pwd)/config
+. ${SHARNESS_TEST_SRCDIR}/scripts/sdexec-diag.sh # DEBUG
 
 # ---------------------------------------------------------------------------
 # Setup: load sdbus/sdexec on all ranks, confirm bgexec is selected

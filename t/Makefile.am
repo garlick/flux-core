@@ -415,6 +415,7 @@ EXTRA_DIST= \
 	flux-jobs/tests \
 	scripts/strerror_symbol \
 	scripts/run_timeout.py \
+	scripts/sdexec-diag.sh \
 	scripts/startctl.py \
 	scripts/groups.py \
 	scripts/squeue \

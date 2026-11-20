@@ -26,6 +26,7 @@ if systemctl --user show dbus | grep -q OOMPolicy=; then
 fi
 
 test_under_flux 2 minimal -Slog-stderr-level=1
+. ${SHARNESS_TEST_SRCDIR}/scripts/sdexec-diag.sh # DEBUG
 
 sdexec="flux exec --service sdexec"
 lptest="flux lptest"

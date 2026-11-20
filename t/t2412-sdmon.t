@@ -23,6 +23,7 @@ if ! busctl status >/dev/null; then
 fi
 
 test_under_flux 1 minimal -Slog-stderr-level=1
+. ${SHARNESS_TEST_SRCDIR}/scripts/sdexec-diag.sh # DEBUG
 
 testname="t2412-$$"
 

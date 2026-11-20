@@ -19,6 +19,7 @@ if ! busctl --user status >/dev/null; then
 fi
 
 test_under_flux 2 minimal
+. ${SHARNESS_TEST_SRCDIR}/scripts/sdexec-diag.sh # DEBUG
 
 # sdbus.call request keys addressing the systemd manager (RFC 52)
 MGR='"destination":"org.freedesktop.systemd1","path":"/org/freedesktop/systemd1","interface":"org.freedesktop.systemd1.Manager"'

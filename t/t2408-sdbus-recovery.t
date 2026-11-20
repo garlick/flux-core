@@ -25,6 +25,7 @@ sdbus-debug = true
 EOF
 
 test_under_flux 1 minimal --config-path=$(pwd)/config -Slog-stderr-level=1
+. ${SHARNESS_TEST_SRCDIR}/scripts/sdexec-diag.sh # DEBUG
 
 # Usage: bus_get_manager_prop property
 bus_get_manager_prop() {

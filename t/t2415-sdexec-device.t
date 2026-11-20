@@ -18,6 +18,7 @@ if ! busctl --user status >/dev/null; then
 fi
 
 test_under_flux 1 minimal -Slog-stderr-level=1
+. ${SHARNESS_TEST_SRCDIR}/scripts/sdexec-diag.sh # DEBUG
 
 sdexec="flux exec --service sdexec"
 # Capture full path: sdexec units may not inherit the build-tree PATH

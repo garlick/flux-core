@@ -31,6 +31,7 @@ if ! test_flux_security_version 0.14.0; then
 fi
 
 test_under_flux 2 minimal -Slog-stderr-level=1
+. ${SHARNESS_TEST_SRCDIR}/scripts/sdexec-diag.sh # DEBUG
 
 sdexec="flux exec --service sdexec"
 wait="flux sproc wait --service sdexec"
